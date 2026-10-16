@@ -14,7 +14,7 @@ final class AppModel: ObservableObject {
     private let feed: any TeamStatsFeed
     private let repository: any PredictionRepository
 
-    init(feed: any TeamStatsFeed = ESPNScoreboardFeed(), repository: (any PredictionRepository)? = nil) {
+    init(feed: any TeamStatsFeed = NFLVerseScheduleFeed(), repository: (any PredictionRepository)? = nil) {
         self.feed = feed
         if let repository {
             self.repository = repository
@@ -47,7 +47,7 @@ final class AppModel: ObservableObject {
             try await repository.save(predictions)
             gradedPredictions = grade(predictions: predictions, results: results)
             status = missing.isEmpty
-                ? "Current records loaded · ESPN scoreboard"
+                ? "Current records loaded · nflverse"
                 : "Partial stats · \(missing.count) teams use neutral ratings"
         } catch {
             predictions = saved.isEmpty ? await calculate(fallbackMatchups, preserving: []) : saved
