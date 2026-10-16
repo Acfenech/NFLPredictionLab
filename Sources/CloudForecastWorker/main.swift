@@ -261,7 +261,7 @@ let outputPredictions = forecastPredictions.map { prediction in
                      reviewFlag: prediction.reviewFlag)
 }
 let output = ForecastOutput(generatedAt: generatedAt, season: season, week: week,
-                            source: source, modelVersion: "MVP 0.8", predictions: outputPredictions)
+                            source: source, modelVersion: "MVP 0.9", predictions: outputPredictions)
 let encoder = JSONEncoder()
 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 encoder.dateEncodingStrategy = .iso8601

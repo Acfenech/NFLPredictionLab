@@ -2,6 +2,10 @@
 
 A private SwiftUI prototype with a shared Swift forecasting engine. Open `NFLPredictionLab.xcodeproj` in Xcode and run the `NFLPredictionLab` scheme on **My Mac** or a connected iPhone.
 
+## MVP 0.9 in-app guidance
+
+MVP 0.9 adds a complete in-app User Guide explaining source provenance, forecast and confidence interpretation, simulations, accuracy metrics, betting labels and validation, refresh/history behavior, manual adjustments, and important limitations.
+
 ## MVP 0.8 betting analysis
 
 MVP 0.8 adds spread, moneyline, and total recommendations with Strong edge, Lean, and Pass classifications. Recommendations require minimum model-versus-market edges, explain their rationale, and are graded historically in the Accuracy screen. A market must also clear a validation gate of at least 30 strong-edge samples and a 54% held-out win rate before the UI can label a wager actionable; otherwise candidate edges are visibly marked Not validated and Pass. They are analytical estimates, not guarantees or financial advice.
