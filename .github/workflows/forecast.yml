@@ -63,7 +63,7 @@ jobs:
 
       - name: Archive forecast artifact
         if: steps.schedule_guard.outputs.run == 'true'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: nfl-forecast-${{ github.run_number }}
           path: forecast-output/*.json
