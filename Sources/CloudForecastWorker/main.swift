@@ -43,11 +43,35 @@ func currentSeasonWeek() async throws -> (Int, Int) {
 let environment = ProcessInfo.processInfo.environment
 let discovered = try await currentSeasonWeek()
 let season = Int(environment["NFL_SEASON"] ?? "") ?? discovered.0
-let week = Int(environment["NFL_WEEK"] ?? "") ?? discovered.1
+let requestedWeek = Int(environment["NFL_WEEK"] ?? "")
 let feed = ESPNScoreboardFeed()
-async let matchupsRequest = feed.upcomingMatchups(season: season, week: week)
-async let snapshotsRequest = feed.snapshots(season: season, week: week)
-let (matchups, snapshots) = try await (matchupsRequest, snapshotsRequest)
+
+let week: Int
+let matchups: [Matchup]
+if let requestedWeek {
+    week = requestedWeek
+    matchups = try await feed.upcomingMatchups(season: season, week: week)
+} else {
+    var selectedWeek: Int?
+    var selectedMatchups: [Matchup] = []
+    for candidate in discovered.1...18 {
+        let games = try await feed.upcomingMatchups(season: season, week: candidate)
+        if !games.isEmpty {
+            selectedWeek = candidate
+            selectedMatchups = games
+            break
+        }
+    }
+    guard let selectedWeek else {
+        throw StatsFeedError.missingFields("upcoming games from week \(discovered.1) through week 18 of \(season)")
+    }
+    week = selectedWeek
+    matchups = selectedMatchups
+}
+guard !matchups.isEmpty else {
+    throw StatsFeedError.missingFields("upcoming games for week \(week) of \(season)")
+}
+let snapshots = try await feed.snapshots(season: season, week: week)
 let engine = ForecastingEngine()
 
 let predictions = matchups.enumerated().map { offset, matchup in

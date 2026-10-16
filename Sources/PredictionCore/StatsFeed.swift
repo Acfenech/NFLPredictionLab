@@ -71,7 +71,6 @@ public struct ESPNScoreboardFeed: TeamStatsFeed {
             guard let away = team("away"), let home = team("home") else { return nil }
             return Matchup(week: week, kickoff: kickoff, away: away, home: home)
         }
-        guard !games.isEmpty else { throw StatsFeedError.invalidResponse }
         return games.sorted { $0.kickoff < $1.kickoff }
     }
 
