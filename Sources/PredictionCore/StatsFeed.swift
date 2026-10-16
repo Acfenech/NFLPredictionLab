@@ -9,14 +9,19 @@ public struct TeamSnapshot: Sendable, Hashable {
     public let rating: Double
     public let offensiveRating: Double
     public let defensiveRating: Double
+    public let recentForm: Double
+    public let restDays: Int
 
     public init(abbreviation: String, record: String, rating: Double,
-                offensiveRating: Double? = nil, defensiveRating: Double? = nil) {
+                offensiveRating: Double? = nil, defensiveRating: Double? = nil,
+                recentForm: Double = 0, restDays: Int = 7) {
         self.abbreviation = abbreviation
         self.record = record
         self.rating = rating
         self.offensiveRating = offensiveRating ?? rating
         self.defensiveRating = defensiveRating ?? rating
+        self.recentForm = recentForm
+        self.restDays = restDays
     }
 }
 
@@ -25,11 +30,77 @@ public protocol TeamStatsFeed: Sendable {
     func upcomingMatchups(season: Int, week: Int) async throws -> [Matchup]
     func snapshots(season: Int, week: Int) async throws -> [String: TeamSnapshot]
     func completedResults(season: Int, week: Int) async throws -> [GameResult]
+    func historicalGames(seasons: ClosedRange<Int>) async throws -> [HistoricalGame]
 }
 
 public extension TeamStatsFeed {
     func currentSeasonWeek(referenceDate: Date = .now) async throws -> (season: Int, week: Int) {
         throw StatsFeedError.missingFields("current NFL season and week")
+    }
+    func historicalGames(seasons: ClosedRange<Int>) async throws -> [HistoricalGame] { [] }
+}
+
+public struct AvailabilityImpact: Codable, Hashable, Sendable {
+    public let adjustment: Double
+    public let note: String
+    public init(adjustment: Double, note: String) {
+        self.adjustment = adjustment
+        self.note = note
+    }
+}
+
+public protocol PlayerAvailabilityFeed: Sendable {
+    func currentImpacts() async throws -> [String: AvailabilityImpact]
+}
+
+public struct AdvancedTeamMetrics: Codable, Hashable, Sendable {
+    public let offensiveEPA: Double
+    public let defensiveEPA: Double
+    public let successRate: Double
+    public let explosivePlayRate: Double
+    public let pressureRate: Double
+    public let turnoverRegression: Double
+
+    public init(offensiveEPA: Double, defensiveEPA: Double, successRate: Double,
+                explosivePlayRate: Double, pressureRate: Double, turnoverRegression: Double) {
+        self.offensiveEPA = offensiveEPA
+        self.defensiveEPA = defensiveEPA
+        self.successRate = successRate
+        self.explosivePlayRate = explosivePlayRate
+        self.pressureRate = pressureRate
+        self.turnoverRegression = turnoverRegression
+    }
+
+    /// Converts normalized play-by-play inputs into a conservative point-scale contribution.
+    public var rating: Double {
+        offensiveEPA * 8 - defensiveEPA * 6 + (successRate - 0.42) * 12 +
+        (explosivePlayRate - 0.10) * 8 + (pressureRate - 0.30) * 4 + turnoverRegression * 0.5
+    }
+}
+
+public struct RemoteAdvancedMetricsFeed: Sendable {
+    public let url: URL
+    public init(url: URL) { self.url = url }
+    public func currentMetrics() async throws -> [String: AdvancedTeamMetrics] {
+        let (data, response) = try await URLSession.shared.data(for: .nflStatsRequest(url: url))
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw StatsFeedError.httpStatus(http.statusCode, String(decoding: data.prefix(300), as: UTF8.self))
+        }
+        return try JSONDecoder().decode([String: AdvancedTeamMetrics].self, from: data)
+    }
+}
+
+/// Provider-neutral JSON adapter. A licensed feed can publish a compact object such as
+/// `{ "BUF": { "adjustment": -4.5, "note": "Starting QB out" } }`.
+public struct RemoteAvailabilityFeed: PlayerAvailabilityFeed {
+    public let url: URL
+    public init(url: URL) { self.url = url }
+    public func currentImpacts() async throws -> [String: AvailabilityImpact] {
+        let (data, response) = try await URLSession.shared.data(for: .nflStatsRequest(url: url))
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw StatsFeedError.httpStatus(http.statusCode, String(decoding: data.prefix(300), as: UTF8.self))
+        }
+        return try JSONDecoder().decode([String: AvailabilityImpact].self, from: data)
     }
 }
 
@@ -133,6 +204,8 @@ public struct ESPNScoreboardFeed: TeamStatsFeed {
             return GameResult(awayAbbreviation: away.0, homeAbbreviation: home.0, awayScore: away.1, homeScore: home.1)
         }
     }
+
+    public func historicalGames(seasons: ClosedRange<Int>) async throws -> [HistoricalGame] { [] }
 
     private func events(season: Int, week: Int) async throws -> [[String: Any]] {
         var components = URLComponents(string: "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard")!
@@ -239,6 +312,21 @@ public actor NFLVerseScheduleFeed: TeamStatsFeed {
             return (pointsFor / totalWeight, pointsAgainst / totalWeight)
         }
 
+        func recentForm(for team: String) -> Double {
+            let margins = completed.filter { $0.away == team || $0.home == team }
+                .sorted { $0.kickoff > $1.kickoff }.prefix(4).map { game -> Double in
+                    let isHome = game.home == team
+                    return Double((isHome ? game.homeScore! : game.awayScore!) - (isHome ? game.awayScore! : game.homeScore!))
+                }
+            return margins.isEmpty ? 0 : margins.reduce(0, +) / Double(margins.count)
+        }
+
+        func restDays(for team: String) -> Int {
+            guard let kickoff = games.first(where: { $0.season == season && $0.week == week && ($0.away == team || $0.home == team) })?.kickoff,
+                  let previous = completed.filter({ $0.away == team || $0.home == team }).map(\.kickoff).max() else { return 7 }
+            return max(3, min(14, Calendar(identifier: .gregorian).dateComponents([.day], from: previous, to: kickoff).day ?? 7))
+        }
+
         func opponentAdjustment(for team: String) -> Double {
             let opponents = completed.compactMap { game -> String? in
                 if game.home == team { return game.away }
@@ -264,7 +352,8 @@ public actor NFLVerseScheduleFeed: TeamStatsFeed {
             let defense = (leagueAverage - scoring.against) * 0.65 + opponent * 0.35
             return (abbreviation, TeamSnapshot(abbreviation: abbreviation, record: record,
                                                 rating: (offense + defense) / 2,
-                                                offensiveRating: offense, defensiveRating: defense))
+                                                offensiveRating: offense, defensiveRating: defense,
+                                                recentForm: recentForm(for: abbreviation), restDays: restDays(for: abbreviation)))
         })
     }
 
@@ -276,6 +365,31 @@ public actor NFLVerseScheduleFeed: TeamStatsFeed {
             return GameResult(awayAbbreviation: game.away, homeAbbreviation: game.home,
                               awayScore: awayScore, homeScore: homeScore)
         }
+    }
+
+    public func historicalGames(seasons: ClosedRange<Int>) async throws -> [HistoricalGame] {
+        let games = try await loadGames()
+        var output: [HistoricalGame] = []
+        for season in seasons {
+            for week in 2...18 {
+                let snapshots = try await snapshots(season: season, week: week)
+                for game in games where game.season == season && game.gameType == "REG" && game.week == week {
+                    guard let awayScore = game.awayScore, let homeScore = game.homeScore,
+                          let away = snapshots[game.away], let home = snapshots[game.home] else { continue }
+                    let matchup = Matchup(week: week, kickoff: game.kickoff,
+                        away: Team(abbreviation: game.away, name: game.away,
+                                   offensiveRating: away.offensiveRating, defensiveRating: away.defensiveRating,
+                                   recentForm: away.recentForm, restDays: away.restDays),
+                        home: Team(abbreviation: game.home, name: game.home,
+                                   offensiveRating: home.offensiveRating, defensiveRating: home.defensiveRating,
+                                   recentForm: home.recentForm, restDays: home.restDays))
+                    let result = GameResult(awayAbbreviation: game.away, homeAbbreviation: game.home,
+                                            awayScore: awayScore, homeScore: homeScore)
+                    output.append(HistoricalGame(season: season, matchup: matchup, result: result))
+                }
+            }
+        }
+        return output
     }
 
     private func loadGames() async throws -> [ScheduleGame] {

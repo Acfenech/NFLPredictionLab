@@ -18,7 +18,9 @@ struct DashboardView: View {
         TabView(selection: $selection) {
             PredictionsView(predictions: model.predictions, season: model.season, week: model.week, feedStatus: model.status, isRefreshing: model.isRefreshing) { Task { await model.refresh() } }.tabItem { Label("Forecasts", systemImage: "sportscourt") }.tag(0)
             SimulationView(predictions: model.predictions).tabItem { Label("Simulations", systemImage: "waveform.path.ecg") }.tag(1)
-            AccuracyView(grades: model.gradedPredictions, archiveCount: model.archiveCount).tabItem { Label("Accuracy", systemImage: "chart.line.uptrend.xyaxis") }.tag(2)
+            AccuracyView(grades: model.gradedPredictions, archiveCount: model.archiveCount,
+                         validationSummary: model.validationSummary, validationSeason: model.validationSeason,
+                         trainingGames: model.trainingGames).tabItem { Label("Accuracy", systemImage: "chart.line.uptrend.xyaxis") }.tag(2)
             HistoryView(bundles: model.archiveBundles).tabItem { Label("History", systemImage: "clock.arrow.circlepath") }.tag(3)
             SettingsView(model: model).tabItem { Label("Model", systemImage: "slider.horizontal.3") }.tag(4)
         }
@@ -52,6 +54,7 @@ struct PredictionsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         ProgressView(value: prediction.confidence) { Text("Confidence \(prediction.confidence, format: .percent.precision(.fractionLength(0)))") }
+                        Text(prediction.confidenceExplanation).font(.caption).foregroundStyle(.secondary)
                     }.padding(.vertical, 6)
                 }
             }
@@ -76,6 +79,17 @@ struct MatchupDetail: View {
             Section("Matchup intelligence") {
                 LabeledContent("Home offense / defense", value: "\(prediction.matchup.home.offensiveRating.formatted(.number.precision(.fractionLength(1)))) / \(prediction.matchup.home.defensiveRating.formatted(.number.precision(.fractionLength(1))))")
                 LabeledContent("Away offense / defense", value: "\(prediction.matchup.away.offensiveRating.formatted(.number.precision(.fractionLength(1)))) / \(prediction.matchup.away.defensiveRating.formatted(.number.precision(.fractionLength(1))))")
+            }
+            Section("Why this projection") {
+                Text(prediction.confidenceExplanation).font(.callout)
+                ForEach(prediction.factors ?? []) { factor in
+                    VStack(alignment: .leading, spacing: 3) {
+                        LabeledContent(factor.name, value: factor.homeEdge.formatted(.number.sign(strategy: .always()).precision(.fractionLength(1))))
+                        Text(factor.detail).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Text("Confidence is the simulated win rate across \(prediction.simulations.formatted()) outcomes—not a guarantee.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }.navigationTitle("Matchup")
     }
@@ -105,6 +119,9 @@ struct SimulationView: View {
 struct AccuracyView: View {
     let grades: [GradedPrediction]
     let archiveCount: Int
+    let validationSummary: BacktestSummary?
+    let validationSeason: Int?
+    let trainingGames: Int
     var body: some View {
         NavigationStack {
             if grades.isEmpty {
@@ -112,6 +129,17 @@ struct AccuracyView: View {
             } else {
                 let summary = Backtester.summarize(grades)!
                 List {
+                    if let validationSummary, let validationSeason {
+                        Section("Out-of-sample validation · \(validationSeason)") {
+                            LabeledContent("Training games", value: trainingGames.formatted())
+                            LabeledContent("Validation games", value: validationSummary.games.formatted())
+                            LabeledContent("Winner accuracy", value: validationSummary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
+                            LabeledContent("Mean score error", value: validationSummary.meanAbsoluteScoreError.formatted(.number.precision(.fractionLength(1))))
+                            LabeledContent("Brier score", value: validationSummary.meanBrierScore.formatted(.number.precision(.fractionLength(3))))
+                            Text("Model weights were selected on earlier seasons; this season was held out from tuning.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
                     Section("Performance") {
                         LabeledContent("Forecasts graded", value: summary.games.formatted())
                         LabeledContent("Winner accuracy", value: summary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
@@ -164,16 +192,23 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Model") {
-                    LabeledContent("Version", value: "MVP 0.3")
+                    LabeledContent("Version", value: "MVP 0.4")
                     LabeledContent("Objective", value: "50% winner · 50% score")
                     LabeledContent("Runs per matchup", value: "10,000")
-                    Text("Ratings use recency-weighted scoring, defense, and opponent strength. Quarterback and injury adjustments can be added without changing the forecasting engine.").font(.footnote).foregroundStyle(.secondary)
+                    Text("Ratings combine offense, defense, opponent strength, recent form, rest, home field, and available QB/injury adjustments. Weights are selected on prior seasons and checked on a held-out season.").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("Persistence") {
                     LabeledContent("Storage", value: model.storageLabel)
+                    LabeledContent("Cloud sync", value: model.syncStatus)
                     if let lastUpdated = model.lastUpdated {
                         LabeledContent("Forecast generated", value: lastUpdated.formatted(date: .abbreviated, time: .shortened))
                         LabeledContent("Freshness", value: Date.now.timeIntervalSince(lastUpdated) < 21_600 ? "Current" : "Refresh recommended")
+                    }
+                    if let sourceUpdatedAt = model.sourceUpdatedAt {
+                        LabeledContent("Source data checked", value: sourceUpdatedAt.formatted(date: .abbreviated, time: .shortened))
+                    }
+                    if let summary = model.validationSummary, let season = model.validationSeason {
+                        LabeledContent("Held-out validation", value: "\(season) · \(summary.games) games")
                     }
                     Text("GitHub Actions runs the scheduled forecast; CloudKit synchronizes the published results.").font(.footnote).foregroundStyle(.secondary)
                 }
@@ -203,7 +238,7 @@ enum SampleData {
         game("NO", "New Orleans Saints", at: "NYG", "New York Giants", kickoff: "2026-10-18T13:00:00-04:00"),
         game("CAR", "Carolina Panthers", at: "PHI", "Philadelphia Eagles", kickoff: "2026-10-18T13:00:00-04:00"),
         game("PIT", "Pittsburgh Steelers", at: "TB", "Tampa Bay Buccaneers", kickoff: "2026-10-18T13:00:00-04:00"),
-        game("AZ", "Arizona Cardinals", at: "LAR", "Los Angeles Rams", kickoff: "2026-10-18T16:05:00-04:00"),
+        game("ARI", "Arizona Cardinals", at: "LA", "Los Angeles Rams", kickoff: "2026-10-18T16:05:00-04:00"),
         game("LAC", "Los Angeles Chargers", at: "KC", "Kansas City Chiefs", kickoff: "2026-10-18T16:25:00-04:00"),
         game("BUF", "Buffalo Bills", at: "LV", "Las Vegas Raiders", kickoff: "2026-10-18T16:25:00-04:00"),
         game("DAL", "Dallas Cowboys", at: "GB", "Green Bay Packers", kickoff: "2026-10-18T20:20:00-04:00"),

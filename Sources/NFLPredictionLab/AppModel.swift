@@ -12,6 +12,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var season = 0
     @Published private(set) var week = 0
     @Published private(set) var lastUpdated: Date?
+    @Published private(set) var sourceUpdatedAt: Date?
+    @Published private(set) var syncStatus = "Connecting to CloudKit…"
+    @Published private(set) var validationSummary: BacktestSummary?
+    @Published private(set) var validationSeason: Int?
+    @Published private(set) var trainingGames = 0
+    @Published private(set) var selectedConfiguration = ModelConfiguration.baseline
     @Published private(set) var storageLabel = "CloudKit"
     @Published private(set) var archiveCount = 0
     @Published private(set) var archiveBundles: [[Prediction]] = []
@@ -20,6 +26,8 @@ final class AppModel: ObservableObject {
     private let fallbackMatchups = SampleData.matchups
     private let feed: any TeamStatsFeed
     private let repository: any PredictionRepository
+    private var availabilityImpacts: [String: AvailabilityImpact] = [:]
+    private var advancedMetrics: [String: AdvancedTeamMetrics] = [:]
 
     init(feed: any TeamStatsFeed = NFLVerseScheduleFeed(), repository: (any PredictionRepository)? = nil) {
         self.feed = feed
@@ -46,17 +54,40 @@ final class AppModel: ObservableObject {
         let saved: [Prediction]
         do { saved = try await repository.load() }
         catch { saved = []; notices.append("Cloud load failed") }
-        let history = (try? await repository.loadHistory()) ?? []
+        let history: [[Prediction]]
+        do {
+            history = try await repository.loadHistory()
+            syncStatus = "CloudKit connected · \(history.count) archives"
+        } catch {
+            history = []
+            syncStatus = "Cloud history unavailable · retry with Refresh"
+            notices.append("History sync failed")
+        }
         archiveCount = history.count
         archiveBundles = history
         do {
             let discovered = try await feed.currentSeasonWeek(referenceDate: .now)
             season = discovered.season
             week = discovered.week
+            if let text = ProcessInfo.processInfo.environment["AVAILABILITY_FEED_URL"], let url = URL(string: text) {
+                do { availabilityImpacts = try await RemoteAvailabilityFeed(url: url).currentImpacts() }
+                catch { notices.append("Availability feed unavailable") }
+            }
+            if let text = ProcessInfo.processInfo.environment["ADVANCED_METRICS_FEED_URL"], let url = URL(string: text) {
+                do { advancedMetrics = try await RemoteAdvancedMetricsFeed(url: url).currentMetrics() }
+                catch { notices.append("Advanced metrics feed unavailable") }
+            }
             async let scheduleRequest = feed.upcomingMatchups(season: season, week: week)
             async let snapshotsRequest = feed.snapshots(season: season, week: week)
             async let resultsRequest = feed.completedResults(season: season, week: week)
-            let (liveMatchups, snapshots, results) = try await (scheduleRequest, snapshotsRequest, resultsRequest)
+            async let historicalRequest = feed.historicalGames(seasons: (season - 3)...(season - 1))
+            let (liveMatchups, snapshots, results, historical) = try await (scheduleRequest, snapshotsRequest, resultsRequest, historicalRequest)
+            if let report = await Task.detached(operation: { ModelTrainer.trainAndValidate(historical) }).value {
+                selectedConfiguration = report.configuration
+                validationSummary = Backtester.summarize(report.grades)
+                validationSeason = report.validationSeason
+                trainingGames = report.trainingGames
+            }
             let matchups = liveMatchups
             let required = Set(matchups.flatMap { [$0.away.abbreviation, $0.home.abbreviation] })
             let missing = required.subtracting(snapshots.keys)
@@ -76,8 +107,10 @@ final class AppModel: ObservableObject {
                     grades.append(contentsOf: grade(predictions: bundle, results: archivedResults))
                 }
             }
+            grades.append(contentsOf: ModelTrainer.trainAndValidate(historical)?.grades ?? [])
             gradedPredictions = grades
-            lastUpdated = predictions.map(\.generatedAt).max()
+            lastUpdated = predictions.compactMap(\.recalculatedAt).max() ?? predictions.map(\.generatedAt).max()
+            sourceUpdatedAt = predictions.compactMap(\.dataSourceUpdatedAt).max()
             let feedMessage = missing.isEmpty
                 ? "Current records loaded · nflverse"
                 : "Partial stats · \(missing.count) teams use neutral ratings"
@@ -88,17 +121,24 @@ final class AppModel: ObservableObject {
                 do { try await repository.save(predictions) }
                 catch { notices.append("Cloud save failed") }
             }
-            lastUpdated = predictions.map(\.generatedAt).max()
+            lastUpdated = predictions.compactMap(\.recalculatedAt).max() ?? predictions.map(\.generatedAt).max()
+            sourceUpdatedAt = predictions.compactMap(\.dataSourceUpdatedAt).max()
             status = (["Stats feed unavailable · cached or neutral forecasts shown"] + notices).joined(separator: " · ")
         }
     }
 
     private func rated(_ team: Team, with snapshots: [String: TeamSnapshot]) -> Team {
         let snapshot = snapshots[team.abbreviation]
-        let adjustment = teamAdjustments[team.abbreviation] ?? 0
+        let manualAdjustment = teamAdjustments[team.abbreviation] ?? 0
+        let availability = availabilityImpacts[team.abbreviation]
+        let adjustment = manualAdjustment + (availability?.adjustment ?? 0)
         return Team(abbreviation: team.abbreviation, name: team.name,
                     offensiveRating: (snapshot?.offensiveRating ?? 0) + adjustment,
-                    defensiveRating: snapshot?.defensiveRating ?? 0)
+                    defensiveRating: snapshot?.defensiveRating ?? 0,
+                    recentForm: snapshot?.recentForm, restDays: snapshot?.restDays,
+                    availabilityAdjustment: adjustment,
+                    availabilityNote: availability?.note ?? (manualAdjustment == 0 ? nil : "Manual adjustment \(manualAdjustment.formatted(.number.sign(strategy: .always()).precision(.fractionLength(1))))"),
+                    advancedEfficiency: advancedMetrics[team.abbreviation]?.rating)
     }
 
     func adjustment(for abbreviation: String) -> Double { teamAdjustments[abbreviation] ?? 0 }
@@ -109,16 +149,17 @@ final class AppModel: ObservableObject {
     }
 
     private func calculate(_ matchups: [Matchup], preserving saved: [Prediction]) async -> [Prediction] {
-        await Task.detached {
-            let engine = ForecastingEngine()
+        let configuration = selectedConfiguration
+        return await Task.detached {
+            let engine = ForecastingEngine(configuration: configuration)
             return matchups.enumerated().map { offset, matchup in
                 let prior = saved.first { $0.matchup.gameKey == matchup.gameKey }
                 let fresh = engine.predict(matchup, seed: UInt64(offset + 1))
                 return Prediction(id: prior?.id ?? fresh.id, matchup: matchup, homeScore: fresh.homeScore,
                                   awayScore: fresh.awayScore, homeWinProbability: fresh.homeWinProbability,
                                   simulations: fresh.simulations, generatedAt: prior?.generatedAt ?? fresh.generatedAt,
-                                  simulationSummary: fresh.simulationSummary, modelVersion: "MVP 0.3",
-                                  dataSourceUpdatedAt: .now)
+                                  simulationSummary: fresh.simulationSummary, modelVersion: "MVP 0.4",
+                                  dataSourceUpdatedAt: .now, recalculatedAt: .now, factors: fresh.factors)
             }
         }.value
     }

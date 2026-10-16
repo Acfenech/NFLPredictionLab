@@ -21,6 +21,7 @@ struct ForecastOutput: Codable {
     let season: Int
     let week: Int
     let source: String
+    let modelVersion: String
     let predictions: [OutputPrediction]
 }
 
@@ -171,21 +172,41 @@ do {
 guard !matchups.isEmpty else {
     throw StatsFeedError.missingFields("upcoming games for week \(week) of \(season)")
 }
-let engine = ForecastingEngine()
+let historical = (try? await NFLVerseScheduleFeed().historicalGames(seasons: (season - 3)...(season - 1))) ?? []
+let validationReport = ModelTrainer.trainAndValidate(historical)
+let engine = ForecastingEngine(configuration: validationReport?.configuration ?? .baseline)
 let forecastSnapshots = snapshots
 let cloudAdjustments: [String: Double] = {
     guard let json = environment["TEAM_ADJUSTMENTS_JSON"], let data = json.data(using: .utf8),
           let values = try? JSONDecoder().decode([String: Double].self, from: data) else { return [:] }
     return values
 }()
+var loadedAvailabilityImpacts: [String: AvailabilityImpact] = [:]
+if let text = environment["AVAILABILITY_FEED_URL"], let url = URL(string: text) {
+    do { loadedAvailabilityImpacts = try await RemoteAvailabilityFeed(url: url).currentImpacts() }
+    catch { print("Availability feed unavailable (\(error)); continuing with configured adjustments") }
+}
+let availabilityImpacts = loadedAvailabilityImpacts
+var loadedAdvancedMetrics: [String: AdvancedTeamMetrics] = [:]
+if let text = environment["ADVANCED_METRICS_FEED_URL"], let url = URL(string: text) {
+    do { loadedAdvancedMetrics = try await RemoteAdvancedMetricsFeed(url: url).currentMetrics() }
+    catch { print("Advanced metrics feed unavailable (\(error)); continuing with schedule-derived ratings") }
+}
+let advancedMetrics = loadedAdvancedMetrics
 
 let forecastPredictions = matchups.enumerated().map { offset, matchup in
     func rated(_ team: Team) -> Team {
         let snapshot = forecastSnapshots[team.abbreviation]
-        let adjustment = cloudAdjustments[team.abbreviation] ?? 0
+        let manualAdjustment = cloudAdjustments[team.abbreviation] ?? 0
+        let impact = availabilityImpacts[team.abbreviation]
+        let adjustment = manualAdjustment + (impact?.adjustment ?? 0)
         return Team(abbreviation: team.abbreviation, name: team.name,
                     offensiveRating: (snapshot?.offensiveRating ?? 0) + adjustment,
-                    defensiveRating: snapshot?.defensiveRating ?? 0)
+                    defensiveRating: snapshot?.defensiveRating ?? 0,
+                    recentForm: snapshot?.recentForm, restDays: snapshot?.restDays,
+                    availabilityAdjustment: adjustment,
+                    availabilityNote: impact?.note ?? (manualAdjustment == 0 ? nil : "Configured adjustment"),
+                    advancedEfficiency: advancedMetrics[team.abbreviation]?.rating)
     }
     let ratedMatchup = Matchup(id: matchup.id, week: matchup.week, kickoff: matchup.kickoff,
                                away: rated(matchup.away), home: rated(matchup.home))
@@ -201,7 +222,7 @@ let outputPredictions = forecastPredictions.map { prediction in
                      simulations: prediction.simulations)
 }
 let output = ForecastOutput(generatedAt: generatedAt, season: season, week: week,
-                            source: source, predictions: outputPredictions)
+                            source: source, modelVersion: "MVP 0.4", predictions: outputPredictions)
 let encoder = JSONEncoder()
 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 encoder.dateEncodingStrategy = .iso8601

@@ -80,14 +80,23 @@ public actor CloudKitPredictionRepository: PredictionRepository {
         catch let error as CKError where error.code == .unknownItem { return [] }
         guard let indexPayload = indexRecord["payload"] as? Data,
               let recordNames = try? decoder.decode([String].self, from: indexPayload) else { return [] }
-        var bundles: [[Prediction]] = []
-        for name in recordNames {
-            guard let record = try? await database.record(for: CKRecord.ID(recordName: name)),
-                  let payload = record["payload"] as? Data,
-                  let predictions = try? decoder.decode([Prediction].self, from: payload) else { continue }
-            bundles.append(predictions)
+        let bundles = await withTaskGroup(of: [Prediction]?.self, returning: [[Prediction]].self) { group in
+            for name in recordNames {
+                group.addTask { await self.loadBundle(recordName: name) }
+            }
+            var loaded: [[Prediction]] = []
+            for await bundle in group {
+                if let bundle { loaded.append(bundle) }
+            }
+            return loaded
         }
         return bundles.sorted { ($0.first?.generatedAt ?? .distantPast) > ($1.first?.generatedAt ?? .distantPast) }
+    }
+
+    private func loadBundle(recordName: String) async -> [Prediction]? {
+        guard let record = try? await database.record(for: CKRecord.ID(recordName: recordName)),
+              let payload = record["payload"] as? Data else { return nil }
+        return try? decoder.decode([Prediction].self, from: payload)
     }
 }
 #endif

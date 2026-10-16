@@ -72,3 +72,43 @@ import Testing
     #expect(bucket?.games == 2)
     #expect(bucket?.observedRate == 0.5)
 }
+
+@Test func predictionExplainsItsPrimaryFactors() {
+    let away = Team(abbreviation: "A", name: "Away", offensiveRating: -2, defensiveRating: -1, recentForm: -3, restDays: 6)
+    let home = Team(abbreviation: "H", name: "Home", offensiveRating: 3, defensiveRating: 2, recentForm: 4, restDays: 9)
+    let prediction = ForecastingEngine().predict(Matchup(week: 4, kickoff: .now, away: away, home: home), simulations: 500)
+    #expect(prediction.factors?.count == 6)
+    #expect(prediction.factors?.contains(where: { $0.name == "Recent form" }) == true)
+    #expect(!prediction.confidenceExplanation.isEmpty)
+}
+
+@Test func betterDefenseSuppressesOpponentScore() {
+    let offense = Team(abbreviation: "A", name: "Away", offensiveRating: 2, defensiveRating: 0)
+    let weakDefense = Team(abbreviation: "W", name: "Weak D", offensiveRating: 0, defensiveRating: -5)
+    let strongDefense = Team(abbreviation: "S", name: "Strong D", offensiveRating: 0, defensiveRating: 5)
+    let engine = ForecastingEngine()
+    let versusWeak = engine.predict(Matchup(week: 1, kickoff: .now, away: offense, home: weakDefense), simulations: 500, seed: 7)
+    let versusStrong = engine.predict(Matchup(week: 1, kickoff: .now, away: offense, home: strongDefense), simulations: 500, seed: 7)
+    #expect(versusStrong.awayScore < versusWeak.awayScore)
+}
+
+@Test func tiedGameIsNotCreditedAsCorrectWinner() {
+    let team = Team(abbreviation: "T", name: "Team", offensiveRating: 0, defensiveRating: 0)
+    let prediction = Prediction(matchup: Matchup(week: 1, kickoff: .now, away: team, home: team), homeScore: 20, awayScore: 17, homeWinProbability: 0.6, simulations: 1)
+    let grade = GradedPrediction(prediction: prediction, actualHomeScore: 20, actualAwayScore: 20)
+    #expect(!grade.winnerCorrect)
+}
+
+@Test func trainerUsesLatestSeasonOnlyForValidation() {
+    let away = Team(abbreviation: "A", name: "Away", offensiveRating: -2, defensiveRating: -2)
+    let home = Team(abbreviation: "H", name: "Home", offensiveRating: 2, defensiveRating: 2)
+    let matchup = Matchup(week: 2, kickoff: .now, away: away, home: home)
+    let games = [
+        HistoricalGame(season: 2023, matchup: matchup, result: GameResult(awayAbbreviation: "A", homeAbbreviation: "H", awayScore: 17, homeScore: 24)),
+        HistoricalGame(season: 2024, matchup: matchup, result: GameResult(awayAbbreviation: "A", homeAbbreviation: "H", awayScore: 20, homeScore: 27))
+    ]
+    let report = ModelTrainer.trainAndValidate(games)
+    #expect(report?.trainingGames == 1)
+    #expect(report?.validationSeason == 2024)
+    #expect(report?.grades.count == 1)
+}

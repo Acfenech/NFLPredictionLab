@@ -5,13 +5,56 @@ public struct Team: Codable, Hashable, Sendable {
     public let name: String
     public let offensiveRating: Double
     public let defensiveRating: Double
+    public let recentForm: Double?
+    public let restDays: Int?
+    public let availabilityAdjustment: Double?
+    public let availabilityNote: String?
+    public let advancedEfficiency: Double?
 
-    public init(abbreviation: String, name: String, offensiveRating: Double, defensiveRating: Double) {
+    public init(abbreviation: String, name: String, offensiveRating: Double, defensiveRating: Double,
+                recentForm: Double? = nil, restDays: Int? = nil,
+                availabilityAdjustment: Double? = nil, availabilityNote: String? = nil,
+                advancedEfficiency: Double? = nil) {
         self.abbreviation = abbreviation
         self.name = name
         self.offensiveRating = offensiveRating
         self.defensiveRating = defensiveRating
+        self.recentForm = recentForm
+        self.restDays = restDays
+        self.availabilityAdjustment = availabilityAdjustment
+        self.availabilityNote = availabilityNote
+        self.advancedEfficiency = advancedEfficiency
     }
+}
+
+public struct ProjectionFactor: Codable, Identifiable, Hashable, Sendable {
+    public let name: String
+    public let detail: String
+    public let homeEdge: Double
+    public var id: String { name }
+
+    public init(name: String, detail: String, homeEdge: Double) {
+        self.name = name
+        self.detail = detail
+        self.homeEdge = homeEdge
+    }
+}
+
+public struct ModelConfiguration: Codable, Hashable, Sendable {
+    public let homeFieldAdvantage: Double
+    public let ratingWeight: Double
+    public let formWeight: Double
+    public let scoreDeviation: Double
+
+    public init(homeFieldAdvantage: Double = 1.6, ratingWeight: Double = 0.5,
+                formWeight: Double = 0.18, scoreDeviation: Double = 8.2) {
+        self.homeFieldAdvantage = homeFieldAdvantage
+        self.ratingWeight = ratingWeight
+        self.formWeight = formWeight
+        self.scoreDeviation = scoreDeviation
+    }
+
+    public static let baseline = ModelConfiguration()
 }
 
 public struct Matchup: Codable, Identifiable, Hashable, Sendable {
@@ -45,11 +88,13 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
     public let simulationSummary: SimulationSummary?
     public let modelVersion: String?
     public let dataSourceUpdatedAt: Date?
+    public let recalculatedAt: Date?
+    public let factors: [ProjectionFactor]?
 
     public var predictedWinner: Team { homeWinProbability >= 0.5 ? matchup.home : matchup.away }
     public var confidence: Double { max(homeWinProbability, 1 - homeWinProbability) }
 
-    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now, simulationSummary: SimulationSummary? = nil, modelVersion: String? = "MVP 0.3", dataSourceUpdatedAt: Date? = .now) {
+    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now, simulationSummary: SimulationSummary? = nil, modelVersion: String? = "MVP 0.4", dataSourceUpdatedAt: Date? = .now, recalculatedAt: Date? = .now, factors: [ProjectionFactor]? = nil) {
         self.id = id
         self.matchup = matchup
         self.homeScore = homeScore
@@ -60,6 +105,16 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
         self.simulationSummary = simulationSummary
         self.modelVersion = modelVersion
         self.dataSourceUpdatedAt = dataSourceUpdatedAt
+        self.recalculatedAt = recalculatedAt
+        self.factors = factors
+    }
+
+
+    public var confidenceExplanation: String {
+        let edge = abs(homeScore - awayScore)
+        if confidence < 0.55 { return "Near toss-up: the projected scoring edge is only \(edge.formatted(.number.precision(.fractionLength(1)))) points." }
+        if confidence < 0.65 { return "Moderate edge: team-strength signals favor \(predictedWinner.abbreviation), but outcome variance remains meaningful." }
+        return "Stronger edge: multiple model factors favor \(predictedWinner.abbreviation) by \(edge.formatted(.number.precision(.fractionLength(1)))) projected points."
     }
 }
 
@@ -96,6 +151,7 @@ public struct GradedPrediction: Codable, Identifiable, Sendable {
     }
 
     public var winnerCorrect: Bool {
+        actualHomeScore != actualAwayScore &&
         (prediction.homeWinProbability >= 0.5) == (actualHomeScore > actualAwayScore)
     }
 
@@ -174,5 +230,31 @@ public struct GameResult: Codable, Hashable, Sendable {
         self.homeAbbreviation = homeAbbreviation
         self.awayScore = awayScore
         self.homeScore = homeScore
+    }
+}
+
+public struct HistoricalGame: Sendable, Hashable {
+    public let season: Int
+    public let matchup: Matchup
+    public let result: GameResult
+
+    public init(season: Int, matchup: Matchup, result: GameResult) {
+        self.season = season
+        self.matchup = matchup
+        self.result = result
+    }
+}
+
+public struct ModelValidationReport: Sendable {
+    public let configuration: ModelConfiguration
+    public let trainingGames: Int
+    public let validationSeason: Int
+    public let grades: [GradedPrediction]
+
+    public init(configuration: ModelConfiguration, trainingGames: Int, validationSeason: Int, grades: [GradedPrediction]) {
+        self.configuration = configuration
+        self.trainingGames = trainingGames
+        self.validationSeason = validationSeason
+        self.grades = grades
     }
 }
