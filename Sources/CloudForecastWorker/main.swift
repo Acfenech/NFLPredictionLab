@@ -27,8 +27,7 @@ func currentSeasonWeek() async throws -> (Int, Int) {
     let url = URL(string: "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard")!
     let request = URLRequest.nflStatsRequest(url: url)
     let (data, response) = try await URLSession.shared.data(for: request)
-    guard let http = response as? HTTPURLResponse else { throw StatsFeedError.invalidResponse }
-    guard http.statusCode == 200 else {
+    if let http = response as? HTTPURLResponse, http.statusCode != 200 {
         throw StatsFeedError.httpStatus(http.statusCode, String(decoding: data.prefix(300), as: UTF8.self))
     }
     guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],

@@ -124,8 +124,7 @@ public struct ESPNScoreboardFeed: TeamStatsFeed {
         ]
         let request = URLRequest.nflStatsRequest(url: components.url!)
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw StatsFeedError.invalidResponse }
-        guard http.statusCode == 200 else {
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             let preview = String(decoding: data.prefix(300), as: UTF8.self)
             throw StatsFeedError.httpStatus(http.statusCode, preview)
         }
