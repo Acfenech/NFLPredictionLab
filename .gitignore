@@ -1,5 +1,6 @@
 .build/
 .swiftpm/xcode/xcuserdata/
+*.xcodeproj/xcuserdata/
 *.xcuserstate
 .DS_Store
 forecast-output/

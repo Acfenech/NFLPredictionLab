@@ -1,0 +1,111 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* Models.swift */; };
+		A10000000000000000000002 /* ForecastingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* ForecastingEngine.swift */; };
+		A10000000000000000000003 /* Persistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* Persistence.swift */; };
+		A10000000000000000000004 /* StatsFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* StatsFeed.swift */; };
+		A10000000000000000000005 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* AppModel.swift */; };
+		A10000000000000000000006 /* NFLPredictionLabApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* NFLPredictionLabApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A20000000000000000000001 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 /* ForecastingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForecastingEngine.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 /* Persistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Persistence.swift; sourceTree = "<group>"; };
+		A20000000000000000000004 /* StatsFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsFeed.swift; sourceTree = "<group>"; };
+		A20000000000000000000005 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		A20000000000000000000006 /* NFLPredictionLabApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NFLPredictionLabApp.swift; sourceTree = "<group>"; };
+		A20000000000000000000007 /* NFLPredictionLab.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NFLPredictionLab.entitlements; sourceTree = SOURCE_ROOT; };
+		A20000000000000000000008 /* NFLPredictionLab.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NFLPredictionLab.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A30000000000000000000001 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A40000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A40000000000000000000002 /* PredictionCore */,
+				A40000000000000000000003 /* App */,
+				A20000000000000000000007 /* NFLPredictionLab.entitlements */,
+				A40000000000000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A40000000000000000000002 /* PredictionCore */ = {
+			isa = PBXGroup;
+			children = (A20000000000000000000001, A20000000000000000000002, A20000000000000000000003, A20000000000000000000004);
+			name = PredictionCore;
+			path = Sources/PredictionCore;
+			sourceTree = SOURCE_ROOT;
+		};
+		A40000000000000000000003 /* App */ = {
+			isa = PBXGroup;
+			children = (A20000000000000000000005, A20000000000000000000006);
+			name = App;
+			path = Sources/NFLPredictionLab;
+			sourceTree = SOURCE_ROOT;
+		};
+		A40000000000000000000004 /* Products */ = {isa = PBXGroup; children = (A20000000000000000000008); name = Products; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A50000000000000000000001 /* NFLPredictionLab */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A90000000000000000000002;
+			buildPhases = (A70000000000000000000001, A30000000000000000000001, A60000000000000000000001);
+			buildRules = ();
+			dependencies = ();
+			name = NFLPredictionLab;
+			productName = NFLPredictionLab;
+			productReference = A20000000000000000000008;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A80000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2710; LastUpgradeCheck = 2710; TargetAttributes = {A50000000000000000000001 = {CreatedOnToolsVersion = 27.1; DevelopmentTeam = 59T6CY473Z; ProvisioningStyle = Automatic; };};};
+			buildConfigurationList = A90000000000000000000001;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = A40000000000000000000001;
+			productRefGroup = A40000000000000000000004;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (A50000000000000000000001);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A60000000000000000000001 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A70000000000000000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		B00000000000000000000001 /* Debug project */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; ENABLE_TESTABILITY = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_VERSION = 6.0;}; name = Debug; };
+		B00000000000000000000002 /* Release project */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_VERSION = 6.0;}; name = Release; };
+		B00000000000000000000003 /* Debug target */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = NFLPredictionLab.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = 59T6CY473Z; ENABLE_APP_SANDBOX = YES; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "NFL Prediction Lab"; IPHONEOS_DEPLOYMENT_TARGET = 18.0; MACOSX_DEPLOYMENT_TARGET = 15.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.acfenech.NFLPredictionLab; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = auto; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Debug; };
+		B00000000000000000000004 /* Release target */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = NFLPredictionLab.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = 59T6CY473Z; ENABLE_APP_SANDBOX = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "NFL Prediction Lab"; IPHONEOS_DEPLOYMENT_TARGET = 18.0; MACOSX_DEPLOYMENT_TARGET = 15.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.acfenech.NFLPredictionLab; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = auto; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A90000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (B00000000000000000000001, B00000000000000000000002); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A90000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (B00000000000000000000003, B00000000000000000000004); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = A80000000000000000000001;
+}

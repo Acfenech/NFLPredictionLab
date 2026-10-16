@@ -1,5 +1,7 @@
 import SwiftUI
+#if canImport(PredictionCore)
 import PredictionCore
+#endif
 
 @main
 struct NFLPredictionLabApp: App {

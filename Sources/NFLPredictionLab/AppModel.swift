@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(PredictionCore)
 import PredictionCore
+#endif
 
 @MainActor
 final class AppModel: ObservableObject {
