@@ -41,7 +41,7 @@ struct CloudKitPublisher {
                     "recordName": "latest",
                     "fields": [
                         "payload": ["value": payload, "type": "BYTES"],
-                        "generatedAt": ["value": generatedAt.timeIntervalSince1970 * 1_000, "type": "TIMESTAMP"],
+                        "generatedAt": ["value": Int64(generatedAt.timeIntervalSince1970 * 1_000), "type": "TIMESTAMP"],
                         "predictionCount": ["value": predictions.count, "type": "INT64"]
                     ]
                 ]
