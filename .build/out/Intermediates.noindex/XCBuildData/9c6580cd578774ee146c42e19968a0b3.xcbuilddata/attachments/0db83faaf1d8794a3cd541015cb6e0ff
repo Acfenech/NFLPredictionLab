@@ -1,0 +1,29 @@
+{
+  "" : {
+    "diagnostics" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/NFLPredictionLab-primary.dia",
+    "emit-module-dependencies" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/NFLPredictionLab-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/NFLPredictionLab-primary-emit-module.dia",
+    "pch" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/NFLPredictionLab-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/NFLPredictionLab-primary.swiftdeps"
+  },
+  "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/Sources/NFLPredictionLab/AppModel.swift" : {
+    "const-values" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/AppModel.swiftconstvalues",
+    "dependencies" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/AppModel.d",
+    "diagnostics" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/AppModel.dia",
+    "index-unit-output-path" : "/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/AppModel.o",
+    "llvm-bc" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/AppModel.bc",
+    "object" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/AppModel.o",
+    "swift-dependencies" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/AppModel.swiftdeps",
+    "swiftmodule" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/AppModel~partial.swiftmodule"
+  },
+  "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/Sources/NFLPredictionLab/NFLPredictionLabApp.swift" : {
+    "const-values" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/NFLPredictionLabApp.swiftconstvalues",
+    "dependencies" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/NFLPredictionLabApp.d",
+    "diagnostics" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/NFLPredictionLabApp.dia",
+    "index-unit-output-path" : "/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/NFLPredictionLabApp.o",
+    "llvm-bc" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/NFLPredictionLabApp.bc",
+    "object" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/NFLPredictionLabApp.o",
+    "swift-dependencies" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/NFLPredictionLabApp.swiftdeps",
+    "swiftmodule" : "/Users/afenech/Documents/Codex/2026-10-16/referenced-chatgpt-conversation-this-is-an/outputs/NFLPredictionLab/.build/out/Intermediates.noindex/NFLPredictionLab.build/Debug/NFLPredictionLab-p.build/Objects-normal/arm64/NFLPredictionLabApp~partial.swiftmodule"
+  }
+}

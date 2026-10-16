@@ -1,0 +1,14 @@
+Target dependency graph (5 targets)
+Target 'AllIncludingTests' in project 'Aggregate'
+➜ Explicit dependency on target 'PredictionCoreTests-product' in project 'NFLPredictionLab'
+➜ Dependency on target 'PredictionCoreTests-product' in project 'NFLPredictionLab' via transitive dependency through 'PredictionCoreTests-test-runner'
+➜ Explicit dependency on target 'PredictionCore-product' in project 'NFLPredictionLab'
+➜ Explicit dependency on target 'NFLPredictionLab-product' in project 'NFLPredictionLab'
+➜ Explicit dependency on target 'PredictionCore' in project 'NFLPredictionLab'
+Target 'NFLPredictionLab-product' in project 'NFLPredictionLab'
+➜ Explicit dependency on target 'PredictionCore' in project 'NFLPredictionLab'
+Target 'PredictionCore-product' in project 'NFLPredictionLab'
+➜ Explicit dependency on target 'PredictionCore' in project 'NFLPredictionLab'
+Target 'PredictionCoreTests-product' in project 'NFLPredictionLab'
+➜ Explicit dependency on target 'PredictionCore' in project 'NFLPredictionLab'
+Target 'PredictionCore' in project 'NFLPredictionLab' (no dependencies)
