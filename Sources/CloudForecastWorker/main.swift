@@ -23,7 +23,7 @@ struct ForecastOutput: Codable {
     let predictions: [OutputPrediction]
 }
 
-func currentSeasonWeek() async throws -> (Int, Int) {
+func espnCurrentSeasonWeek() async throws -> (Int, Int) {
     let url = URL(string: "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard")!
     let request = URLRequest.nflStatsRequest(url: url)
     let (data, response) = try await URLSession.shared.data(for: request)
@@ -41,42 +41,60 @@ func currentSeasonWeek() async throws -> (Int, Int) {
 }
 
 let environment = ProcessInfo.processInfo.environment
-let discovered = try await currentSeasonWeek()
-let season = Int(environment["NFL_SEASON"] ?? "") ?? discovered.0
+let requestedSeason = Int(environment["NFL_SEASON"] ?? "")
 let requestedWeek = Int(environment["NFL_WEEK"] ?? "")
-let feed = ESPNScoreboardFeed()
 
-let week: Int
-let matchups: [Matchup]
-if let requestedWeek {
-    week = requestedWeek
+var season = 0
+var week = 0
+var matchups: [Matchup] = []
+var snapshots: [String: TeamSnapshot] = [:]
+var source = ""
+
+do {
+    let feed = NFLVerseScheduleFeed()
+    let discovered = try await feed.currentSeasonWeek()
+    season = requestedSeason ?? discovered.season
+    week = requestedWeek ?? discovered.week
     matchups = try await feed.upcomingMatchups(season: season, week: week)
-} else {
-    var selectedWeek: Int?
-    var selectedMatchups: [Matchup] = []
-    for candidate in discovered.1...18 {
-        let games = try await feed.upcomingMatchups(season: season, week: candidate)
-        if !games.isEmpty {
-            selectedWeek = candidate
-            selectedMatchups = games
-            break
+    snapshots = try await feed.snapshots(season: season, week: week)
+    source = "nflverse schedules and results"
+} catch {
+    print("nflverse unavailable (\(error)); falling back to ESPN scoreboard")
+    let feed = ESPNScoreboardFeed()
+    let discovered = try await espnCurrentSeasonWeek()
+    season = requestedSeason ?? discovered.0
+    if let requestedWeek {
+        week = requestedWeek
+        matchups = try await feed.upcomingMatchups(season: season, week: week)
+    } else {
+        var selectedWeek: Int?
+        var selectedMatchups: [Matchup] = []
+        for candidate in discovered.1...18 {
+            let games = try await feed.upcomingMatchups(season: season, week: candidate)
+            if !games.isEmpty {
+                selectedWeek = candidate
+                selectedMatchups = games
+                break
+            }
         }
+        guard let selectedWeek else {
+            throw StatsFeedError.missingFields("upcoming games from week \(discovered.1) through week 18 of \(season)")
+        }
+        week = selectedWeek
+        matchups = selectedMatchups
     }
-    guard let selectedWeek else {
-        throw StatsFeedError.missingFields("upcoming games from week \(discovered.1) through week 18 of \(season)")
-    }
-    week = selectedWeek
-    matchups = selectedMatchups
+    snapshots = try await feed.snapshots(season: season, week: week)
+    source = "ESPN scoreboard fallback"
 }
 guard !matchups.isEmpty else {
     throw StatsFeedError.missingFields("upcoming games for week \(week) of \(season)")
 }
-let snapshots = try await feed.snapshots(season: season, week: week)
 let engine = ForecastingEngine()
+let forecastSnapshots = snapshots
 
 let predictions = matchups.enumerated().map { offset, matchup in
     func rated(_ team: Team) -> Team {
-        let rating = snapshots[team.abbreviation]?.rating ?? 0
+        let rating = forecastSnapshots[team.abbreviation]?.rating ?? 0
         return Team(abbreviation: team.abbreviation, name: team.name,
                     offensiveRating: rating, defensiveRating: rating)
     }
@@ -91,7 +109,7 @@ let predictions = matchups.enumerated().map { offset, matchup in
 }
 
 let output = ForecastOutput(generatedAt: .now, season: season, week: week,
-                            source: "ESPN scoreboard baseline", predictions: predictions)
+                            source: source, predictions: predictions)
 let encoder = JSONEncoder()
 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 encoder.dateEncodingStrategy = .iso8601

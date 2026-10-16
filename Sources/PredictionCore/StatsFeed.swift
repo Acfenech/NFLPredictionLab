@@ -147,3 +147,173 @@ public struct ESPNScoreboardFeed: TeamStatsFeed {
     }
 }
 
+/// No-key schedule and results feed backed by nflverse's automatically updated
+/// `schedules` release. Ratings are based on each team's record before kickoff.
+public actor NFLVerseScheduleFeed: TeamStatsFeed {
+    private let sourceURL: URL
+    private var cachedGames: [ScheduleGame]?
+
+    public init(sourceURL: URL = URL(string: "https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv")!) {
+        self.sourceURL = sourceURL
+    }
+
+    public func currentSeasonWeek(referenceDate: Date = .now) async throws -> (season: Int, week: Int) {
+        let games = try await loadGames()
+        let upcoming = games
+            .filter { $0.gameType == "REG" && $0.kickoff >= referenceDate }
+            .sorted { $0.kickoff < $1.kickoff }
+        guard let next = upcoming.first else {
+            throw StatsFeedError.missingFields("a future regular-season game in the nflverse schedule")
+        }
+        return (next.season, next.week)
+    }
+
+    public func upcomingMatchups(season: Int, week: Int) async throws -> [Matchup] {
+        let games = try await loadGames()
+        return games
+            .filter { $0.season == season && $0.gameType == "REG" && $0.week == week && $0.homeScore == nil }
+            .sorted { $0.kickoff < $1.kickoff }
+            .map {
+                Matchup(week: week, kickoff: $0.kickoff,
+                        away: Team(abbreviation: $0.away, name: $0.away, offensiveRating: 0, defensiveRating: 0),
+                        home: Team(abbreviation: $0.home, name: $0.home, offensiveRating: 0, defensiveRating: 0))
+            }
+    }
+
+    public func snapshots(season: Int, week: Int) async throws -> [String: TeamSnapshot] {
+        let games = try await loadGames()
+        let teams = Set(games.filter { $0.season == season && $0.gameType == "REG" && $0.week == week }
+            .flatMap { [$0.away, $0.home] })
+        var records = Dictionary(uniqueKeysWithValues: teams.map { ($0, (wins: 0, losses: 0, ties: 0)) })
+
+        for game in games where game.season == season && game.gameType == "REG" && game.week < week {
+            guard let awayScore = game.awayScore, let homeScore = game.homeScore else { continue }
+            if awayScore == homeScore {
+                records[game.away]?.ties += 1
+                records[game.home]?.ties += 1
+            } else if awayScore > homeScore {
+                records[game.away]?.wins += 1
+                records[game.home]?.losses += 1
+            } else {
+                records[game.home]?.wins += 1
+                records[game.away]?.losses += 1
+            }
+        }
+
+        return Dictionary(uniqueKeysWithValues: records.map { abbreviation, value in
+            let record = value.ties == 0
+                ? "\(value.wins)-\(value.losses)"
+                : "\(value.wins)-\(value.losses)-\(value.ties)"
+            return (abbreviation, TeamSnapshot(abbreviation: abbreviation, record: record,
+                                                rating: ESPNScoreboardFeed.rating(from: record)))
+        })
+    }
+
+    public func completedResults(season: Int, week: Int) async throws -> [GameResult] {
+        let games = try await loadGames()
+        return games.compactMap { game in
+            guard game.season == season, game.gameType == "REG", game.week == week,
+                  let awayScore = game.awayScore, let homeScore = game.homeScore else { return nil }
+            return GameResult(awayAbbreviation: game.away, homeAbbreviation: game.home,
+                              awayScore: awayScore, homeScore: homeScore)
+        }
+    }
+
+    private func loadGames() async throws -> [ScheduleGame] {
+        if let cachedGames { return cachedGames }
+        let request = URLRequest.nflStatsRequest(url: sourceURL)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw StatsFeedError.httpStatus(http.statusCode, String(decoding: data.prefix(300), as: UTF8.self))
+        }
+        let games = try Self.parseSchedule(String(decoding: data, as: UTF8.self))
+        guard !games.isEmpty else { throw StatsFeedError.missingFields("nflverse schedule rows") }
+        cachedGames = games
+        return games
+    }
+
+    private static func parseSchedule(_ csv: String) throws -> [ScheduleGame] {
+        let rows = CSV.rows(csv)
+        guard let header = rows.first else { throw StatsFeedError.missingFields("nflverse CSV header") }
+        let indexes = Dictionary(uniqueKeysWithValues: header.enumerated().map { ($1, $0) })
+        let required = ["season", "game_type", "week", "gameday", "gametime", "away_team", "away_score", "home_team", "home_score"]
+        guard required.allSatisfy({ indexes[$0] != nil }) else {
+            throw StatsFeedError.missingFields("required nflverse schedule columns")
+        }
+
+        func value(_ row: [String], _ name: String) -> String {
+            guard let index = indexes[name], row.indices.contains(index) else { return "" }
+            return row[index]
+        }
+
+        return rows.dropFirst().compactMap { row in
+            guard let season = Int(value(row, "season")), let week = Int(value(row, "week")) else { return nil }
+            let dateText = value(row, "gameday")
+            let timeText = value(row, "gametime").isEmpty ? "13:00" : value(row, "gametime")
+            guard let kickoff = easternDateFormatter.date(from: "\(dateText) \(timeText)") else { return nil }
+            return ScheduleGame(season: season, gameType: value(row, "game_type"), week: week,
+                                kickoff: kickoff, away: value(row, "away_team"), home: value(row, "home_team"),
+                                awayScore: Int(value(row, "away_score")), homeScore: Int(value(row, "home_score")))
+        }
+    }
+
+    private static let easternDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "America/New_York")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
+}
+
+private struct ScheduleGame: Sendable {
+    let season: Int
+    let gameType: String
+    let week: Int
+    let kickoff: Date
+    let away: String
+    let home: String
+    let awayScore: Int?
+    let homeScore: Int?
+}
+
+private enum CSV {
+    static func rows(_ text: String) -> [[String]] {
+        var result: [[String]] = []
+        var row: [String] = []
+        var field = ""
+        var quoted = false
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            let character = text[index]
+            let next = text.index(after: index)
+            if character == "\"" {
+                if quoted, next < text.endIndex, text[next] == "\"" {
+                    field.append("\"")
+                    index = text.index(after: next)
+                    continue
+                }
+                quoted.toggle()
+            } else if character == "," && !quoted {
+                row.append(field)
+                field = ""
+            } else if (character == "\n" || character == "\r") && !quoted {
+                if character == "\r", next < text.endIndex, text[next] == "\n" { index = next }
+                row.append(field)
+                if !row.allSatisfy({ $0.isEmpty }) { result.append(row) }
+                row = []
+                field = ""
+            } else {
+                field.append(character)
+            }
+            index = text.index(after: index)
+        }
+        if !field.isEmpty || !row.isEmpty {
+            row.append(field)
+            result.append(row)
+        }
+        return result
+    }
+}
+
