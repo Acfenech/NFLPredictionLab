@@ -21,8 +21,21 @@ public protocol TeamStatsFeed: Sendable {
     func completedResults(season: Int, week: Int) async throws -> [GameResult]
 }
 
-public enum StatsFeedError: Error {
+public enum StatsFeedError: Error, CustomStringConvertible {
     case invalidResponse
+    case httpStatus(Int, String)
+    case missingFields(String)
+
+    public var description: String {
+        switch self {
+        case .invalidResponse:
+            return "The stats feed returned an invalid response."
+        case let .httpStatus(code, preview):
+            return "The stats feed returned HTTP \(code): \(preview)"
+        case let .missingFields(fields):
+            return "The stats feed response is missing: \(fields)"
+        }
+    }
 }
 
 public extension URLRequest {
@@ -111,10 +124,14 @@ public struct ESPNScoreboardFeed: TeamStatsFeed {
         ]
         let request = URLRequest.nflStatsRequest(url: components.url!)
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-              let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let http = response as? HTTPURLResponse else { throw StatsFeedError.invalidResponse }
+        guard http.statusCode == 200 else {
+            let preview = String(decoding: data.prefix(300), as: UTF8.self)
+            throw StatsFeedError.httpStatus(http.statusCode, preview)
+        }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let events = root["events"] as? [[String: Any]] else {
-            throw StatsFeedError.invalidResponse
+            throw StatsFeedError.missingFields("events")
         }
 
         return events
