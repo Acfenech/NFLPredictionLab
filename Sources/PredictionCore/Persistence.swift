@@ -5,7 +5,12 @@ import CloudKit
 
 public protocol PredictionRepository: Sendable {
     func load() async throws -> [Prediction]
+    func loadHistory() async throws -> [[Prediction]]
     func save(_ predictions: [Prediction]) async throws
+}
+
+public extension PredictionRepository {
+    func loadHistory() async throws -> [[Prediction]] { [] }
 }
 
 public actor LocalPredictionRepository: PredictionRepository {
@@ -21,6 +26,8 @@ public actor LocalPredictionRepository: PredictionRepository {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(predictions).write(to: url, options: .atomic)
     }
+
+    public func loadHistory() throws -> [[Prediction]] { [] }
 }
 
 #if canImport(CloudKit)
@@ -64,6 +71,23 @@ public actor CloudKitPredictionRepository: PredictionRepository {
         record["generatedAt"] = Date() as CKRecordValue
         record["predictionCount"] = predictions.count as CKRecordValue
         _ = try await database.save(record)
+    }
+
+    public func loadHistory() async throws -> [[Prediction]] {
+        let indexID = CKRecord.ID(recordName: "history-index")
+        let indexRecord: CKRecord
+        do { indexRecord = try await database.record(for: indexID) }
+        catch let error as CKError where error.code == .unknownItem { return [] }
+        guard let indexPayload = indexRecord["payload"] as? Data,
+              let recordNames = try? decoder.decode([String].self, from: indexPayload) else { return [] }
+        var bundles: [[Prediction]] = []
+        for name in recordNames {
+            guard let record = try? await database.record(for: CKRecord.ID(recordName: name)),
+                  let payload = record["payload"] as? Data,
+                  let predictions = try? decoder.decode([Prediction].self, from: payload) else { continue }
+            bundles.append(predictions)
+        }
+        return bundles.sorted { ($0.first?.generatedAt ?? .distantPast) > ($1.first?.generatedAt ?? .distantPast) }
     }
 }
 #endif

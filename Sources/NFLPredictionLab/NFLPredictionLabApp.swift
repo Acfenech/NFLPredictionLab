@@ -18,8 +18,9 @@ struct DashboardView: View {
         TabView(selection: $selection) {
             PredictionsView(predictions: model.predictions, season: model.season, week: model.week, feedStatus: model.status, isRefreshing: model.isRefreshing) { Task { await model.refresh() } }.tabItem { Label("Forecasts", systemImage: "sportscourt") }.tag(0)
             SimulationView(predictions: model.predictions).tabItem { Label("Simulations", systemImage: "waveform.path.ecg") }.tag(1)
-            AccuracyView(grades: model.gradedPredictions).tabItem { Label("Accuracy", systemImage: "chart.line.uptrend.xyaxis") }.tag(2)
-            SettingsView(storageLabel: model.storageLabel, lastUpdated: model.lastUpdated).tabItem { Label("Model", systemImage: "slider.horizontal.3") }.tag(3)
+            AccuracyView(grades: model.gradedPredictions, archiveCount: model.archiveCount).tabItem { Label("Accuracy", systemImage: "chart.line.uptrend.xyaxis") }.tag(2)
+            HistoryView(bundles: model.archiveBundles).tabItem { Label("History", systemImage: "clock.arrow.circlepath") }.tag(3)
+            SettingsView(model: model).tabItem { Label("Model", systemImage: "slider.horizontal.3") }.tag(4)
         }
         .frame(minWidth: 760, minHeight: 540)
         .task { await model.refresh() }
@@ -103,35 +104,87 @@ struct SimulationView: View {
 
 struct AccuracyView: View {
     let grades: [GradedPrediction]
+    let archiveCount: Int
     var body: some View {
         NavigationStack {
             if grades.isEmpty {
-                ContentUnavailableView("Awaiting completed games", systemImage: "chart.bar", description: Text("Saved forecasts will be graded when final scores arrive."))
+                ContentUnavailableView("Awaiting completed games", systemImage: "chart.bar", description: Text("\(archiveCount) archived forecast snapshots are ready to grade when final scores arrive."))
             } else {
                 let summary = Backtester.summarize(grades)!
                 List {
-                    LabeledContent("Games graded", value: summary.games.formatted())
-                    LabeledContent("Winner accuracy", value: summary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
-                    LabeledContent("Mean score error", value: summary.meanAbsoluteScoreError.formatted(.number.precision(.fractionLength(1))))
-                    LabeledContent("Brier score", value: summary.meanBrierScore.formatted(.number.precision(.fractionLength(3))))
-                    LabeledContent("Balanced score", value: summary.balancedAccuracy.formatted(.percent.precision(.fractionLength(0))))
+                    Section("Performance") {
+                        LabeledContent("Forecasts graded", value: summary.games.formatted())
+                        LabeledContent("Winner accuracy", value: summary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
+                        LabeledContent("Mean score error", value: summary.meanAbsoluteScoreError.formatted(.number.precision(.fractionLength(1))))
+                        LabeledContent("Brier score", value: summary.meanBrierScore.formatted(.number.precision(.fractionLength(3))))
+                        LabeledContent("Balanced score", value: summary.balancedAccuracy.formatted(.percent.precision(.fractionLength(0))))
+                    }
+                    Section("Calibration") {
+                        ForEach(Backtester.calibration(grades)) { bucket in
+                            LabeledContent("\(bucket.lowerBound.formatted(.percent.precision(.fractionLength(0))))–\(bucket.upperBound.formatted(.percent.precision(.fractionLength(0)))) · \(bucket.games) games",
+                                           value: "Observed \(bucket.observedRate.formatted(.percent.precision(.fractionLength(0))))")
+                        }
+                    }
                 }.navigationTitle("Accuracy")
             }
         }
     }
 }
 
+struct HistoryView: View {
+    let bundles: [[Prediction]]
+    var body: some View {
+        NavigationStack {
+            if bundles.isEmpty {
+                ContentUnavailableView("No history yet", systemImage: "clock", description: Text("Scheduled cloud runs will add immutable forecast snapshots here."))
+            } else {
+                List {
+                    ForEach(Array(bundles.enumerated()), id: \.offset) { _, bundle in
+                        if let first = bundle.first {
+                            Section("\(first.generatedAt.formatted(date: .abbreviated, time: .shortened)) · \(first.modelVersion ?? "Legacy")") {
+                                ForEach(bundle) { prediction in
+                                    LabeledContent("\(prediction.matchup.away.abbreviation) at \(prediction.matchup.home.abbreviation)",
+                                                   value: "\(prediction.predictedWinner.abbreviation) · \(prediction.confidence.formatted(.percent.precision(.fractionLength(0))))")
+                                }
+                            }
+                        }
+                    }
+                }.navigationTitle("Forecast History")
+            }
+        }
+    }
+}
+
 struct SettingsView: View {
-    let storageLabel: String
-    let lastUpdated: Date?
+    @ObservedObject var model: AppModel
+    private var teams: [String] {
+        Set(model.predictions.flatMap { [$0.matchup.away.abbreviation, $0.matchup.home.abbreviation] }).sorted()
+    }
     var body: some View {
         NavigationStack {
             Form {
-                Section("Model") { LabeledContent("Version", value: "MVP 0.2"); LabeledContent("Objective", value: "50% winner · 50% score"); LabeledContent("Runs per matchup", value: "10,000") }
+                Section("Model") {
+                    LabeledContent("Version", value: "MVP 0.3")
+                    LabeledContent("Objective", value: "50% winner · 50% score")
+                    LabeledContent("Runs per matchup", value: "10,000")
+                    Text("Ratings use recency-weighted scoring, defense, and opponent strength. Quarterback and injury adjustments can be added without changing the forecasting engine.").font(.footnote).foregroundStyle(.secondary)
+                }
                 Section("Persistence") {
-                    LabeledContent("Storage", value: storageLabel)
-                    if let lastUpdated { LabeledContent("Forecast generated", value: lastUpdated.formatted(date: .abbreviated, time: .shortened)) }
+                    LabeledContent("Storage", value: model.storageLabel)
+                    if let lastUpdated = model.lastUpdated {
+                        LabeledContent("Forecast generated", value: lastUpdated.formatted(date: .abbreviated, time: .shortened))
+                        LabeledContent("Freshness", value: Date.now.timeIntervalSince(lastUpdated) < 21_600 ? "Current" : "Refresh recommended")
+                    }
                     Text("GitHub Actions runs the scheduled forecast; CloudKit synchronizes the published results.").font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("QB / injury adjustments") {
+                    Text("Adjust a team's offense from −10 to +10 points, then refresh forecasts. Use negative values for an unavailable quarterback or major offensive injuries.").font(.footnote).foregroundStyle(.secondary)
+                    ForEach(teams, id: \.self) { team in
+                        Stepper(value: Binding(get: { model.adjustment(for: team) }, set: { model.setAdjustment($0, for: team) }), in: -10...10, step: 0.5) {
+                            LabeledContent(team, value: model.adjustment(for: team).formatted(.number.sign(strategy: .always()).precision(.fractionLength(1))))
+                        }
+                    }
+                    Button("Recalculate with adjustments") { Task { await model.refresh() } }
                 }
             }.navigationTitle("Model Control")
         }

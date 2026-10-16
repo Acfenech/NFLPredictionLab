@@ -7,11 +7,16 @@ public struct TeamSnapshot: Sendable, Hashable {
     public let abbreviation: String
     public let record: String
     public let rating: Double
+    public let offensiveRating: Double
+    public let defensiveRating: Double
 
-    public init(abbreviation: String, record: String, rating: Double) {
+    public init(abbreviation: String, record: String, rating: Double,
+                offensiveRating: Double? = nil, defensiveRating: Double? = nil) {
         self.abbreviation = abbreviation
         self.record = record
         self.rating = rating
+        self.offensiveRating = offensiveRating ?? rating
+        self.defensiveRating = defensiveRating ?? rating
     }
 }
 
@@ -201,7 +206,10 @@ public actor NFLVerseScheduleFeed: TeamStatsFeed {
             .flatMap { [$0.away, $0.home] })
         var records = Dictionary(uniqueKeysWithValues: teams.map { ($0, (wins: 0, losses: 0, ties: 0)) })
 
-        for game in games where game.season == season && game.gameType == "REG" && game.week < week {
+        let completed = games.filter {
+            $0.season == season && $0.gameType == "REG" && $0.week < week && $0.awayScore != nil && $0.homeScore != nil
+        }
+        for game in completed {
             guard let awayScore = game.awayScore, let homeScore = game.homeScore else { continue }
             if awayScore == homeScore {
                 records[game.away]?.ties += 1
@@ -215,12 +223,48 @@ public actor NFLVerseScheduleFeed: TeamStatsFeed {
             }
         }
 
+        let leaguePoints = completed.flatMap { [$0.awayScore!, $0.homeScore!] }
+        let leagueAverage = leaguePoints.isEmpty ? 22.5 : Double(leaguePoints.reduce(0, +)) / Double(leaguePoints.count)
+
+        func weightedScoring(for team: String) -> (for: Double, against: Double) {
+            var pointsFor = 0.0, pointsAgainst = 0.0, totalWeight = 0.0
+            for game in completed where game.away == team || game.home == team {
+                let weight = pow(0.82, Double(max(0, week - game.week - 1)))
+                let isHome = game.home == team
+                pointsFor += Double(isHome ? game.homeScore! : game.awayScore!) * weight
+                pointsAgainst += Double(isHome ? game.awayScore! : game.homeScore!) * weight
+                totalWeight += weight
+            }
+            guard totalWeight > 0 else { return (leagueAverage, leagueAverage) }
+            return (pointsFor / totalWeight, pointsAgainst / totalWeight)
+        }
+
+        func opponentAdjustment(for team: String) -> Double {
+            let opponents = completed.compactMap { game -> String? in
+                if game.home == team { return game.away }
+                if game.away == team { return game.home }
+                return nil
+            }
+            guard !opponents.isEmpty else { return 0 }
+            return opponents.map { opponent in
+                guard let value = records[opponent] else { return 0 }
+                let games = value.wins + value.losses + value.ties
+                guard games > 0 else { return 0 }
+                return ((Double(value.wins) + Double(value.ties) * 0.5) / Double(games) - 0.5) * 4
+            }.reduce(0, +) / Double(opponents.count)
+        }
+
         return Dictionary(uniqueKeysWithValues: records.map { abbreviation, value in
             let record = value.ties == 0
                 ? "\(value.wins)-\(value.losses)"
                 : "\(value.wins)-\(value.losses)-\(value.ties)"
+            let scoring = weightedScoring(for: abbreviation)
+            let opponent = opponentAdjustment(for: abbreviation)
+            let offense = (scoring.for - leagueAverage) * 0.65 + opponent * 0.35
+            let defense = (leagueAverage - scoring.against) * 0.65 + opponent * 0.35
             return (abbreviation, TeamSnapshot(abbreviation: abbreviation, record: record,
-                                                rating: ESPNScoreboardFeed.rating(from: record)))
+                                                rating: (offense + defense) / 2,
+                                                offensiveRating: offense, defensiveRating: defense))
         })
     }
 

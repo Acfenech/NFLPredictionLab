@@ -33,26 +33,55 @@ struct CloudKitPublisher {
     func publish(_ predictions: [Prediction], season: Int, week: Int, generatedAt: Date) async throws {
         let encoder = JSONEncoder()
         let payload = try encoder.encode(predictions).base64EncodedString()
-        let fields: [String: Any] = [
+        func fields(payload: String, count: Int) -> [String: Any] { [
             "payload": ["value": payload, "type": "BYTES"],
             "generatedAt": ["value": Int64(generatedAt.timeIntervalSince1970 * 1_000), "type": "TIMESTAMP"],
-            "predictionCount": ["value": predictions.count, "type": "INT64"]
-        ]
+            "predictionCount": ["value": count, "type": "INT64"]
+        ] }
         let archiveName = "\(season)-W\(week)-\(Int64(generatedAt.timeIntervalSince1970))"
+        let previousNames = (try? await historyRecordNames()) ?? []
+        let historyNames = Array((previousNames + [archiveName]).suffix(100))
+        let historyPayload = try encoder.encode(historyNames).base64EncodedString()
         let bodyObject: [String: Any] = [
-            "operations": ["latest", archiveName].map { recordName -> [String: Any] in
+            "operations": [
+                ("latest", fields(payload: payload, count: predictions.count)),
+                (archiveName, fields(payload: payload, count: predictions.count)),
+                ("history-index", fields(payload: historyPayload, count: historyNames.count))
+            ].map { recordName, recordFields -> [String: Any] in
                 [
                     "operationType": "forceReplace",
                     "record": [
                         "recordType": "ForecastBundle",
                         "recordName": recordName,
-                        "fields": fields
+                        "fields": recordFields
                     ]
                 ]
             }
         ]
-        let body = try JSONSerialization.data(withJSONObject: bodyObject, options: [.sortedKeys])
         let subpath = "/database/1/\(container)/\(environment)/public/records/modify"
+        let responseData = try await perform(bodyObject, subpath: subpath)
+        if let responseObject = try JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+           let records = responseObject["records"] as? [[String: Any]],
+           let failure = records.first(where: { $0["serverErrorCode"] != nil }) {
+            throw StatsFeedError.missingFields("CloudKit publish failed: \(failure)")
+        }
+    }
+
+    private func historyRecordNames() async throws -> [String] {
+        let subpath = "/database/1/\(container)/\(environment)/public/records/lookup"
+        let data = try await perform(["records": [["recordName": "history-index"]]], subpath: subpath)
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let record = (root["records"] as? [[String: Any]])?.first,
+              record["serverErrorCode"] == nil,
+              let fields = record["fields"] as? [String: Any],
+              let payload = fields["payload"] as? [String: Any],
+              let value = payload["value"] as? String,
+              let decoded = Data(base64Encoded: value) else { return [] }
+        return (try? JSONDecoder().decode([String].self, from: decoded)) ?? []
+    }
+
+    private func perform(_ bodyObject: [String: Any], subpath: String) async throws -> Data {
+        let body = try JSONSerialization.data(withJSONObject: bodyObject, options: [.sortedKeys])
         let date = ISO8601DateFormatter().string(from: Date())
         let bodyHash = Data(SHA256.hash(data: body)).base64EncodedString()
         let message = "\(date):\(bodyHash):\(subpath)"
@@ -72,11 +101,7 @@ struct CloudKitPublisher {
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             throw StatsFeedError.httpStatus(status, String(decoding: responseData.prefix(1_000), as: UTF8.self))
         }
-        if let responseObject = try JSONSerialization.jsonObject(with: responseData) as? [String: Any],
-           let records = responseObject["records"] as? [[String: Any]],
-           let failure = records.first(where: { $0["serverErrorCode"] != nil }) {
-            throw StatsFeedError.missingFields("CloudKit publish failed: \(failure)")
-        }
+        return responseData
     }
 }
 
@@ -148,12 +173,19 @@ guard !matchups.isEmpty else {
 }
 let engine = ForecastingEngine()
 let forecastSnapshots = snapshots
+let cloudAdjustments: [String: Double] = {
+    guard let json = environment["TEAM_ADJUSTMENTS_JSON"], let data = json.data(using: .utf8),
+          let values = try? JSONDecoder().decode([String: Double].self, from: data) else { return [:] }
+    return values
+}()
 
 let forecastPredictions = matchups.enumerated().map { offset, matchup in
     func rated(_ team: Team) -> Team {
-        let rating = forecastSnapshots[team.abbreviation]?.rating ?? 0
+        let snapshot = forecastSnapshots[team.abbreviation]
+        let adjustment = cloudAdjustments[team.abbreviation] ?? 0
         return Team(abbreviation: team.abbreviation, name: team.name,
-                    offensiveRating: rating, defensiveRating: rating)
+                    offensiveRating: (snapshot?.offensiveRating ?? 0) + adjustment,
+                    defensiveRating: snapshot?.defensiveRating ?? 0)
     }
     let ratedMatchup = Matchup(id: matchup.id, week: matchup.week, kickoff: matchup.kickoff,
                                away: rated(matchup.away), home: rated(matchup.home))

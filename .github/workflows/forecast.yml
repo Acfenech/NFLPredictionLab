@@ -59,6 +59,7 @@ jobs:
           CLOUDKIT_ENVIRONMENT: development
           CLOUDKIT_KEY_ID: ${{ secrets.CLOUDKIT_KEY_ID }}
           CLOUDKIT_PRIVATE_KEY: ${{ secrets.CLOUDKIT_PRIVATE_KEY }}
+          TEAM_ADJUSTMENTS_JSON: ${{ vars.TEAM_ADJUSTMENTS_JSON }}
         run: swift run CloudForecastWorker
 
       - name: Archive forecast artifact

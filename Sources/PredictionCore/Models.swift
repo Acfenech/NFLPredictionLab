@@ -43,11 +43,13 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
     public let simulations: Int
     public let generatedAt: Date
     public let simulationSummary: SimulationSummary?
+    public let modelVersion: String?
+    public let dataSourceUpdatedAt: Date?
 
     public var predictedWinner: Team { homeWinProbability >= 0.5 ? matchup.home : matchup.away }
     public var confidence: Double { max(homeWinProbability, 1 - homeWinProbability) }
 
-    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now, simulationSummary: SimulationSummary? = nil) {
+    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now, simulationSummary: SimulationSummary? = nil, modelVersion: String? = "MVP 0.3", dataSourceUpdatedAt: Date? = .now) {
         self.id = id
         self.matchup = matchup
         self.homeScore = homeScore
@@ -56,6 +58,8 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
         self.simulations = simulations
         self.generatedAt = generatedAt
         self.simulationSummary = simulationSummary
+        self.modelVersion = modelVersion
+        self.dataSourceUpdatedAt = dataSourceUpdatedAt
     }
 }
 
@@ -120,6 +124,15 @@ public struct BacktestSummary: Sendable, Hashable {
     public let balancedAccuracy: Double
 }
 
+public struct CalibrationBucket: Identifiable, Sendable, Hashable {
+    public let lowerBound: Double
+    public let upperBound: Double
+    public let games: Int
+    public let predictedRate: Double
+    public let observedRate: Double
+    public var id: Double { lowerBound }
+}
+
 public enum Backtester {
     public static func summarize(_ grades: [GradedPrediction]) -> BacktestSummary? {
         guard !grades.isEmpty else { return nil }
@@ -131,6 +144,22 @@ public enum Backtester {
             meanBrierScore: grades.map(\.brierScore).reduce(0, +) / count,
             balancedAccuracy: grades.map(\.balancedAccuracy).reduce(0, +) / count
         )
+    }
+
+    public static func calibration(_ grades: [GradedPrediction]) -> [CalibrationBucket] {
+        stride(from: 0.5, to: 1.0, by: 0.1).compactMap { lower in
+            let upper = min(1, lower + 0.1)
+            let selected = grades.filter { grade in
+                let confidence = grade.prediction.confidence
+                return confidence >= lower && (upper == 1 ? confidence <= upper : confidence < upper)
+            }
+            guard !selected.isEmpty else { return nil }
+            return CalibrationBucket(
+                lowerBound: lower, upperBound: upper, games: selected.count,
+                predictedRate: selected.map { $0.prediction.confidence }.reduce(0, +) / Double(selected.count),
+                observedRate: Double(selected.filter(\.winnerCorrect).count) / Double(selected.count)
+            )
+        }
     }
 }
 

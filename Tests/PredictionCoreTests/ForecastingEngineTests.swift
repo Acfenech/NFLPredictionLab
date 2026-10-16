@@ -60,3 +60,15 @@ import Testing
     #expect(summary?.winnerAccuracy == 1)
     #expect(summary?.meanAbsoluteScoreError == 0)
 }
+
+@Test func calibrationGroupsForecastConfidence() {
+    let team = Team(abbreviation: "T", name: "Team", offensiveRating: 0, defensiveRating: 0)
+    let matchup = Matchup(week: 1, kickoff: .now, away: team, home: team)
+    let grades = [
+        GradedPrediction(prediction: Prediction(matchup: matchup, homeScore: 24, awayScore: 20, homeWinProbability: 0.72, simulations: 1), actualHomeScore: 24, actualAwayScore: 20),
+        GradedPrediction(prediction: Prediction(matchup: matchup, homeScore: 24, awayScore: 20, homeWinProbability: 0.76, simulations: 1), actualHomeScore: 17, actualAwayScore: 20)
+    ]
+    let bucket = Backtester.calibration(grades).first
+    #expect(bucket?.games == 2)
+    #expect(bucket?.observedRate == 0.5)
+}
