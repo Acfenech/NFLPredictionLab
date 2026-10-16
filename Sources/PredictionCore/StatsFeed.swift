@@ -25,6 +25,15 @@ public enum StatsFeedError: Error {
     case invalidResponse
 }
 
+public extension URLRequest {
+    static func nflStatsRequest(url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.setValue("NFLPredictionLab/1.0 (+https://github.com/Acfenech/NFLPredictionLab)", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        return request
+    }
+}
+
 /// Lightweight, no-key baseline feed using ESPN's public scoreboard endpoint.
 /// It supplies current records; a licensed provider can replace it behind TeamStatsFeed.
 public struct ESPNScoreboardFeed: TeamStatsFeed {
@@ -100,7 +109,8 @@ public struct ESPNScoreboardFeed: TeamStatsFeed {
             URLQueryItem(name: "seasontype", value: "2"),
             URLQueryItem(name: "week", value: String(week))
         ]
-        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        let request = URLRequest.nflStatsRequest(url: components.url!)
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let events = root["events"] as? [[String: Any]] else {

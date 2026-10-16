@@ -25,7 +25,8 @@ struct ForecastOutput: Codable {
 
 func currentSeasonWeek() async throws -> (Int, Int) {
     let url = URL(string: "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard")!
-    let (data, response) = try await URLSession.shared.data(from: url)
+    let request = URLRequest.nflStatsRequest(url: url)
+    let (data, response) = try await URLSession.shared.data(for: request)
     guard let http = response as? HTTPURLResponse, http.statusCode == 200,
           let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
           let season = root["season"] as? [String: Any],
