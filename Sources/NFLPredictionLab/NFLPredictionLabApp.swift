@@ -55,6 +55,11 @@ struct PredictionsView: View {
                             .foregroundStyle(.secondary)
                         ProgressView(value: prediction.confidence) { Text("Confidence \(prediction.confidence, format: .percent.precision(.fractionLength(0)))") }
                         Text(prediction.confidenceExplanation).font(.caption).foregroundStyle(.secondary)
+                        if let comparison = prediction.marketComparison {
+                            Label(comparison, systemImage: "dollarsign.arrow.circlepath").font(.caption).foregroundStyle(.purple)
+                        } else {
+                            Text("Market line not posted").font(.caption2).foregroundStyle(.tertiary)
+                        }
                     }.padding(.vertical, 6)
                 }
             }
@@ -90,6 +95,19 @@ struct MatchupDetail: View {
                 }
                 Text("Confidence is the simulated win rate across \(prediction.simulations.formatted()) outcomes—not a guarantee.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Market comparison") {
+                if let line = prediction.matchup.bettingLine, let comparison = prediction.marketComparison {
+                    Text(comparison)
+                    if let homeMoneyline = line.homeMoneyline { LabeledContent("\(prediction.matchup.home.abbreviation) moneyline", value: homeMoneyline.formatted(.number.sign(strategy: .always()))) }
+                    if let awayMoneyline = line.awayMoneyline { LabeledContent("\(prediction.matchup.away.abbreviation) moneyline", value: awayMoneyline.formatted(.number.sign(strategy: .always()))) }
+                    Text("Source: \(line.source). Lines are shown for comparison, not as betting advice.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    ContentUnavailableView("Market line not posted", systemImage: "clock", description: Text("The comparison will appear after nflverse publishes consensus odds."))
+                }
+                if let movement = prediction.movementSummary {
+                    Label(movement, systemImage: "arrow.up.arrow.down").font(.caption)
+                }
             }
         }.navigationTitle("Matchup")
     }
@@ -128,6 +146,12 @@ struct AccuracyView: View {
                 ContentUnavailableView("Awaiting completed games", systemImage: "chart.bar", description: Text("\(archiveCount) archived forecast snapshots are ready to grade when final scores arrive."))
             } else {
                 let summary = Backtester.summarize(grades)!
+                let marketGrades = grades.filter { $0.prediction.matchup.bettingLine?.homeSpread != nil }
+                let homeBaseline = Double(grades.filter { $0.actualHomeScore > $0.actualAwayScore }.count) / Double(grades.count)
+                let marketCorrect = marketGrades.filter { grade in
+                    guard let margin = grade.prediction.matchup.bettingLine?.homeSpread else { return false }
+                    return (margin >= 0) == (grade.actualHomeScore > grade.actualAwayScore)
+                }.count
                 List {
                     if let validationSummary, let validationSeason {
                         Section("Out-of-sample validation · \(validationSeason)") {
@@ -146,6 +170,14 @@ struct AccuracyView: View {
                         LabeledContent("Mean score error", value: summary.meanAbsoluteScoreError.formatted(.number.precision(.fractionLength(1))))
                         LabeledContent("Brier score", value: summary.meanBrierScore.formatted(.number.precision(.fractionLength(3))))
                         LabeledContent("Balanced score", value: summary.balancedAccuracy.formatted(.percent.precision(.fractionLength(0))))
+                    }
+                    Section("Benchmark comparison") {
+                        LabeledContent("MVP 0.5 winner accuracy", value: summary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
+                        LabeledContent("Always choose home", value: homeBaseline.formatted(.percent.precision(.fractionLength(0))))
+                        if !marketGrades.isEmpty {
+                            LabeledContent("Market favorite", value: (Double(marketCorrect) / Double(marketGrades.count)).formatted(.percent.precision(.fractionLength(0))))
+                            LabeledContent("Games with market lines", value: marketGrades.count.formatted())
+                        }
                     }
                     Section("Calibration") {
                         ForEach(Backtester.calibration(grades)) { bucket in
@@ -192,7 +224,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Model") {
-                    LabeledContent("Version", value: "MVP 0.4")
+                    LabeledContent("Version", value: "MVP 0.5")
                     LabeledContent("Objective", value: "50% winner · 50% score")
                     LabeledContent("Runs per matchup", value: "10,000")
                     Text("Ratings combine offense, defense, opponent strength, recent form, rest, home field, and available QB/injury adjustments. Weights are selected on prior seasons and checked on a held-out season.").font(.footnote).foregroundStyle(.secondary)

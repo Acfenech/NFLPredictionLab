@@ -30,6 +30,7 @@ public struct ForecastingEngine: Sendable {
         let advancedEdge = (matchup.home.advancedEfficiency ?? 0) - (matchup.away.advancedEfficiency ?? 0)
         let expectedHome = max(3, leagueAverage + homeMatchupEdge + configuration.homeFieldAdvantage + formEdge / 2 + restEdge / 2 + availabilityEdge / 2 + advancedEdge / 2)
         let expectedAway = max(3, leagueAverage + awayMatchupEdge - formEdge / 2 - restEdge / 2 - availabilityEdge / 2 - advancedEdge / 2)
+        let matchupVolatility = configuration.scoreDeviation + min(2.5, abs(homeMatchupEdge - awayMatchupEdge) * 0.12)
         var rng = SeededGenerator(seed: seed)
         var homeWinCredits = 0.0
         var homeTotal = 0.0
@@ -44,8 +45,8 @@ public struct ForecastingEngine: Sendable {
             // A shared pace factor introduces realistic score correlation; team-specific
             // variation then determines the result.
             let pace = gaussian(using: &rng) * 4.0
-            let home = max(0, expectedHome + pace + gaussian(using: &rng) * configuration.scoreDeviation)
-            let away = max(0, expectedAway + pace + gaussian(using: &rng) * configuration.scoreDeviation)
+            let home = max(0, expectedHome + pace + gaussian(using: &rng) * matchupVolatility)
+            let away = max(0, expectedAway + pace + gaussian(using: &rng) * matchupVolatility)
             homeTotal += home
             awayTotal += away
             homeScores.append(home)
@@ -75,14 +76,28 @@ public struct ForecastingEngine: Sendable {
             ProjectionFactor(name: "QB / injuries", detail: matchup.home.availabilityNote ?? matchup.away.availabilityNote ?? "No confirmed availability adjustment.", homeEdge: availabilityEdge)
             ,ProjectionFactor(name: "Play-by-play efficiency", detail: advancedEdge == 0 ? "No external EPA/success-rate edge is currently configured." : "EPA, success, explosive-play, pressure, and turnover-regression inputs contribute \(advancedEdge.formatted(signedOneDecimal)) points.", homeEdge: advancedEdge)
         ]
+        let rawHomeProbability = homeWinCredits / Double(count)
         return Prediction(
             matchup: matchup,
             homeScore: homeTotal / Double(count),
             awayScore: awayTotal / Double(count),
-            homeWinProbability: homeWinCredits / Double(count),
+            homeWinProbability: calibrated(rawHomeProbability),
             simulations: count,
-            simulationSummary: summary, modelVersion: "MVP 0.4", factors: factors
+            simulationSummary: summary, modelVersion: "MVP 0.5", factors: factors
         )
+    }
+
+    private func calibrated(_ probability: Double) -> Double {
+        let points = configuration.calibrationPoints.sorted { $0.predicted < $1.predicted }
+        guard !points.isEmpty else { return probability }
+        guard let upperIndex = points.firstIndex(where: { $0.predicted >= probability }) else {
+            return min(0.98, max(0.02, points.last!.observed))
+        }
+        guard upperIndex > 0 else { return min(0.98, max(0.02, points[0].observed)) }
+        let lower = points[upperIndex - 1], upper = points[upperIndex]
+        let width = max(0.0001, upper.predicted - lower.predicted)
+        let weight = (probability - lower.predicted) / width
+        return min(0.98, max(0.02, lower.observed + (upper.observed - lower.observed) * weight))
     }
 
     private func gaussian<R: RandomNumberGenerator>(using rng: inout R) -> Double {
@@ -115,7 +130,41 @@ public enum ModelTrainer {
             (Backtester.summarize(grades(training, lhs))?.balancedAccuracy ?? 0) <
             (Backtester.summarize(grades(training, rhs))?.balancedAccuracy ?? 0)
         } ?? .baseline
-        return ModelValidationReport(configuration: selected, trainingGames: training.count,
-                                     validationSeason: validationSeason, grades: grades(validation, selected))
+        let trainingGrades = grades(training, selected)
+        let calibrated = ModelConfiguration(homeFieldAdvantage: selected.homeFieldAdvantage,
+                                            ratingWeight: selected.ratingWeight,
+                                            formWeight: selected.formWeight,
+                                            scoreDeviation: selected.scoreDeviation,
+                                            calibrationPoints: ProbabilityCalibrator.fit(trainingGrades))
+        return ModelValidationReport(configuration: calibrated, trainingGames: training.count,
+                                     validationSeason: validationSeason, grades: grades(validation, calibrated))
+    }
+}
+
+public enum ProbabilityCalibrator {
+    public static func fit(_ grades: [GradedPrediction]) -> [CalibrationPoint] {
+        struct Block { var predicted: Double; var observed: Double; var count: Int }
+        var blocks: [Block] = stride(from: 0.0, to: 1.0, by: 0.1).compactMap { lower in
+            let selected = grades.filter { $0.prediction.homeWinProbability >= lower && $0.prediction.homeWinProbability < lower + 0.1 }
+            guard !selected.isEmpty else { return nil }
+            let count = Double(selected.count)
+            let predicted = selected.map { $0.prediction.homeWinProbability }.reduce(0, +) / count
+            let outcomes = selected.map { $0.actualHomeScore > $0.actualAwayScore ? 1.0 : $0.actualHomeScore == $0.actualAwayScore ? 0.5 : 0.0 }
+            // Modest prior shrinkage avoids extreme calibration from thin bins.
+            let observed = (outcomes.reduce(0, +) + predicted * 4) / (count + 4)
+            return Block(predicted: predicted, observed: observed, count: selected.count)
+        }
+        var index = 0
+        while index + 1 < blocks.count {
+            if blocks[index].observed <= blocks[index + 1].observed { index += 1; continue }
+            let lhs = blocks[index], rhs = blocks[index + 1]
+            let total = lhs.count + rhs.count
+            blocks[index] = Block(predicted: (lhs.predicted * Double(lhs.count) + rhs.predicted * Double(rhs.count)) / Double(total),
+                                  observed: (lhs.observed * Double(lhs.count) + rhs.observed * Double(rhs.count)) / Double(total),
+                                  count: total)
+            blocks.remove(at: index + 1)
+            if index > 0 { index -= 1 }
+        }
+        return blocks.map { CalibrationPoint(predicted: $0.predicted, observed: $0.observed) }
     }
 }

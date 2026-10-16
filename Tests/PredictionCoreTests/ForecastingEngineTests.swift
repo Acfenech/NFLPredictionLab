@@ -112,3 +112,34 @@ import Testing
     #expect(report?.validationSeason == 2024)
     #expect(report?.grades.count == 1)
 }
+
+@Test func probabilityCalibrationIsMonotonic() {
+    let team = Team(abbreviation: "T", name: "Team", offensiveRating: 0, defensiveRating: 0)
+    let matchup = Matchup(week: 1, kickoff: .now, away: team, home: team)
+    let grades = stride(from: 0.05, through: 0.95, by: 0.05).enumerated().map { index, probability in
+        GradedPrediction(prediction: Prediction(matchup: matchup, homeScore: 21, awayScore: 20,
+                                                 homeWinProbability: probability, simulations: 1),
+                         actualHomeScore: index > 8 ? 24 : 17, actualAwayScore: 20)
+    }
+    let points = ProbabilityCalibrator.fit(grades)
+    #expect(zip(points, points.dropFirst()).allSatisfy { $0.observed <= $1.observed })
+}
+
+@Test func bettingLineComparisonShowsMarginAndTotal() {
+    let away = Team(abbreviation: "A", name: "Away", offensiveRating: 0, defensiveRating: 0)
+    let home = Team(abbreviation: "H", name: "Home", offensiveRating: 0, defensiveRating: 0)
+    let matchup = Matchup(week: 1, kickoff: .now, away: away, home: home,
+                          bettingLine: BettingLine(homeSpread: 3.5, total: 44.5, homeMoneyline: -170, awayMoneyline: 145))
+    let prediction = Prediction(matchup: matchup, homeScore: 27, awayScore: 21, homeWinProbability: 0.7, simulations: 1)
+    #expect(prediction.marketComparison?.contains("market H by 3.5") == true)
+    #expect(prediction.marketComparison?.contains("market 44.5") == true)
+}
+
+@Test func forecastMovementUsesPriorProbability() {
+    let away = Team(abbreviation: "A", name: "Away", offensiveRating: 0, defensiveRating: 0)
+    let home = Team(abbreviation: "H", name: "Home", offensiveRating: 0, defensiveRating: 0)
+    let prediction = Prediction(matchup: Matchup(week: 1, kickoff: .now, away: away, home: home),
+                                homeScore: 24, awayScore: 20, homeWinProbability: 0.68,
+                                simulations: 1, previousHomeWinProbability: 0.60)
+    #expect(prediction.movementSummary?.contains("H win probability moved") == true)
+}

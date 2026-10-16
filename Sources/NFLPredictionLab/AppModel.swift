@@ -94,7 +94,7 @@ final class AppModel: ObservableObject {
             let ratedMatchups = matchups.map { matchup in
                 Matchup(id: matchup.id, week: matchup.week, kickoff: matchup.kickoff,
                         away: rated(matchup.away, with: snapshots),
-                        home: rated(matchup.home, with: snapshots))
+                        home: rated(matchup.home, with: snapshots), bettingLine: matchup.bettingLine)
             }
             predictions = await calculate(ratedMatchups, preserving: saved)
             do { try await repository.save(predictions) }
@@ -158,8 +158,10 @@ final class AppModel: ObservableObject {
                 return Prediction(id: prior?.id ?? fresh.id, matchup: matchup, homeScore: fresh.homeScore,
                                   awayScore: fresh.awayScore, homeWinProbability: fresh.homeWinProbability,
                                   simulations: fresh.simulations, generatedAt: prior?.generatedAt ?? fresh.generatedAt,
-                                  simulationSummary: fresh.simulationSummary, modelVersion: "MVP 0.4",
-                                  dataSourceUpdatedAt: .now, recalculatedAt: .now, factors: fresh.factors)
+                                  simulationSummary: fresh.simulationSummary, modelVersion: "MVP 0.5",
+                                  dataSourceUpdatedAt: .now, recalculatedAt: .now, factors: fresh.factors,
+                                  previousHomeWinProbability: prior?.homeWinProbability,
+                                  previousHomeScore: prior?.homeScore, previousAwayScore: prior?.awayScore)
             }
         }.value
     }

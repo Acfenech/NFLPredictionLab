@@ -14,6 +14,10 @@ struct OutputPrediction: Codable {
     let homeScore: Double
     let homeWinProbability: Double
     let simulations: Int
+    let projectedHomeMargin: Double
+    let projectedTotal: Double
+    let marketHomeMargin: Double?
+    let marketTotal: Double?
 }
 
 struct ForecastOutput: Codable {
@@ -209,7 +213,7 @@ let forecastPredictions = matchups.enumerated().map { offset, matchup in
                     advancedEfficiency: advancedMetrics[team.abbreviation]?.rating)
     }
     let ratedMatchup = Matchup(id: matchup.id, week: matchup.week, kickoff: matchup.kickoff,
-                               away: rated(matchup.away), home: rated(matchup.home))
+                               away: rated(matchup.away), home: rated(matchup.home), bettingLine: matchup.bettingLine)
     return engine.predict(ratedMatchup, seed: UInt64(offset + 1))
 }
 
@@ -219,10 +223,14 @@ let outputPredictions = forecastPredictions.map { prediction in
                      away: prediction.matchup.away.abbreviation, home: prediction.matchup.home.abbreviation,
                      awayScore: prediction.awayScore, homeScore: prediction.homeScore,
                      homeWinProbability: prediction.homeWinProbability,
-                     simulations: prediction.simulations)
+                     simulations: prediction.simulations,
+                     projectedHomeMargin: prediction.projectedHomeSpread,
+                     projectedTotal: prediction.projectedTotal,
+                     marketHomeMargin: prediction.matchup.bettingLine?.homeSpread,
+                     marketTotal: prediction.matchup.bettingLine?.total)
 }
 let output = ForecastOutput(generatedAt: generatedAt, season: season, week: week,
-                            source: source, modelVersion: "MVP 0.4", predictions: outputPredictions)
+                            source: source, modelVersion: "MVP 0.5", predictions: outputPredictions)
 let encoder = JSONEncoder()
 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 encoder.dateEncodingStrategy = .iso8601

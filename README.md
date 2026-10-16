@@ -26,6 +26,21 @@ For play-by-play inputs, `ADVANCED_METRICS_FEED_URL` accepts one object per team
 licensed metrics without embedding credentials in the application. Schedule-derived ratings remain
 the safe fallback.
 
+## MVP 0.5 calibration and market comparison
+
+MVP 0.5 fits a monotonic probability calibration curve on training seasons and evaluates the
+calibrated model on the held-out season. Matchup-specific scoring volatility replaces the prior
+single fixed variance.
+
+When nflverse publishes consensus fields, the app compares its projected margin and total with
+`spread_line`, `total_line`, `home_moneyline`, and `away_moneyline`. Historical validation compares
+model winner accuracy with both the home-team baseline and the market favorite. Missing future lines
+are labeled clearly and never block a forecast. Market information is contextual analysis, not betting
+advice.
+
+Each recalculation also retains the prior probability and score projection so the matchup view can
+explain forecast movement between data refreshes.
+
 ## Apple app target
 
 The repository-owned Xcode project contains one multiplatform target for macOS, iPhone, and iPad. Its bundle identifier is `com.acfenech.NFLPredictionLab`, its development team is configured, and CloudKit persistence uses `iCloud.com.acfenech.NFLPredictionLab` in the development environment.

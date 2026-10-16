@@ -269,7 +269,8 @@ public actor NFLVerseScheduleFeed: TeamStatsFeed {
             .map {
                 Matchup(week: week, kickoff: $0.kickoff,
                         away: Team(abbreviation: $0.away, name: $0.away, offensiveRating: 0, defensiveRating: 0),
-                        home: Team(abbreviation: $0.home, name: $0.home, offensiveRating: 0, defensiveRating: 0))
+                        home: Team(abbreviation: $0.home, name: $0.home, offensiveRating: 0, defensiveRating: 0),
+                        bettingLine: $0.bettingLine)
             }
     }
 
@@ -382,7 +383,8 @@ public actor NFLVerseScheduleFeed: TeamStatsFeed {
                                    recentForm: away.recentForm, restDays: away.restDays),
                         home: Team(abbreviation: game.home, name: game.home,
                                    offensiveRating: home.offensiveRating, defensiveRating: home.defensiveRating,
-                                   recentForm: home.recentForm, restDays: home.restDays))
+                                   recentForm: home.recentForm, restDays: home.restDays),
+                        bettingLine: game.bettingLine)
                     let result = GameResult(awayAbbreviation: game.away, homeAbbreviation: game.home,
                                             awayScore: awayScore, homeScore: homeScore)
                     output.append(HistoricalGame(season: season, matchup: matchup, result: result))
@@ -426,7 +428,11 @@ public actor NFLVerseScheduleFeed: TeamStatsFeed {
             guard let kickoff = easternDateFormatter.date(from: "\(dateText) \(timeText)") else { return nil }
             return ScheduleGame(season: season, gameType: value(row, "game_type"), week: week,
                                 kickoff: kickoff, away: value(row, "away_team"), home: value(row, "home_team"),
-                                awayScore: Int(value(row, "away_score")), homeScore: Int(value(row, "home_score")))
+                                awayScore: Int(value(row, "away_score")), homeScore: Int(value(row, "home_score")),
+                                bettingLine: BettingLine(homeSpread: Double(value(row, "spread_line")),
+                                                         total: Double(value(row, "total_line")),
+                                                         homeMoneyline: Int(value(row, "home_moneyline")),
+                                                         awayMoneyline: Int(value(row, "away_moneyline"))))
         }
     }
 
@@ -448,6 +454,7 @@ private struct ScheduleGame: Sendable {
     let home: String
     let awayScore: Int?
     let homeScore: Int?
+    let bettingLine: BettingLine
 }
 
 private enum CSV {

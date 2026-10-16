@@ -45,16 +45,46 @@ public struct ModelConfiguration: Codable, Hashable, Sendable {
     public let ratingWeight: Double
     public let formWeight: Double
     public let scoreDeviation: Double
+    public let calibrationPoints: [CalibrationPoint]
 
     public init(homeFieldAdvantage: Double = 1.6, ratingWeight: Double = 0.5,
-                formWeight: Double = 0.18, scoreDeviation: Double = 8.2) {
+                formWeight: Double = 0.18, scoreDeviation: Double = 8.2,
+                calibrationPoints: [CalibrationPoint] = []) {
         self.homeFieldAdvantage = homeFieldAdvantage
         self.ratingWeight = ratingWeight
         self.formWeight = formWeight
         self.scoreDeviation = scoreDeviation
+        self.calibrationPoints = calibrationPoints
     }
 
     public static let baseline = ModelConfiguration()
+}
+
+public struct CalibrationPoint: Codable, Hashable, Sendable {
+    public let predicted: Double
+    public let observed: Double
+    public init(predicted: Double, observed: Double) {
+        self.predicted = predicted
+        self.observed = observed
+    }
+}
+
+public struct BettingLine: Codable, Hashable, Sendable {
+    /// nflverse convention: positive means the designated home team is favored.
+    public let homeSpread: Double?
+    public let total: Double?
+    public let homeMoneyline: Int?
+    public let awayMoneyline: Int?
+    public let source: String
+
+    public init(homeSpread: Double? = nil, total: Double? = nil, homeMoneyline: Int? = nil,
+                awayMoneyline: Int? = nil, source: String = "nflverse consensus") {
+        self.homeSpread = homeSpread
+        self.total = total
+        self.homeMoneyline = homeMoneyline
+        self.awayMoneyline = awayMoneyline
+        self.source = source
+    }
 }
 
 public struct Matchup: Codable, Identifiable, Hashable, Sendable {
@@ -63,13 +93,16 @@ public struct Matchup: Codable, Identifiable, Hashable, Sendable {
     public let kickoff: Date
     public let away: Team
     public let home: Team
+    public let bettingLine: BettingLine?
 
-    public init(id: UUID = UUID(), week: Int, kickoff: Date, away: Team, home: Team) {
+    public init(id: UUID = UUID(), week: Int, kickoff: Date, away: Team, home: Team,
+                bettingLine: BettingLine? = nil) {
         self.id = id
         self.week = week
         self.kickoff = kickoff
         self.away = away
         self.home = home
+        self.bettingLine = bettingLine
     }
 
     public var gameKey: String {
@@ -90,11 +123,14 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
     public let dataSourceUpdatedAt: Date?
     public let recalculatedAt: Date?
     public let factors: [ProjectionFactor]?
+    public let previousHomeWinProbability: Double?
+    public let previousHomeScore: Double?
+    public let previousAwayScore: Double?
 
     public var predictedWinner: Team { homeWinProbability >= 0.5 ? matchup.home : matchup.away }
     public var confidence: Double { max(homeWinProbability, 1 - homeWinProbability) }
 
-    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now, simulationSummary: SimulationSummary? = nil, modelVersion: String? = "MVP 0.4", dataSourceUpdatedAt: Date? = .now, recalculatedAt: Date? = .now, factors: [ProjectionFactor]? = nil) {
+    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now, simulationSummary: SimulationSummary? = nil, modelVersion: String? = "MVP 0.5", dataSourceUpdatedAt: Date? = .now, recalculatedAt: Date? = .now, factors: [ProjectionFactor]? = nil, previousHomeWinProbability: Double? = nil, previousHomeScore: Double? = nil, previousAwayScore: Double? = nil) {
         self.id = id
         self.matchup = matchup
         self.homeScore = homeScore
@@ -107,6 +143,35 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
         self.dataSourceUpdatedAt = dataSourceUpdatedAt
         self.recalculatedAt = recalculatedAt
         self.factors = factors
+        self.previousHomeWinProbability = previousHomeWinProbability
+        self.previousHomeScore = previousHomeScore
+        self.previousAwayScore = previousAwayScore
+    }
+
+    public var projectedHomeSpread: Double { homeScore - awayScore }
+    public var projectedTotal: Double { homeScore + awayScore }
+
+    public var marketComparison: String? {
+        guard let line = matchup.bettingLine else { return nil }
+        var parts: [String] = []
+        if let spread = line.homeSpread {
+            let difference = projectedHomeSpread - spread
+            let projectedSide = projectedHomeSpread >= 0 ? matchup.home.abbreviation : matchup.away.abbreviation
+            let marketSide = spread >= 0 ? matchup.home.abbreviation : matchup.away.abbreviation
+            parts.append("Projected \(projectedSide) by \(abs(projectedHomeSpread).formatted(.number.precision(.fractionLength(1)))) vs market \(marketSide) by \(abs(spread).formatted(.number.precision(.fractionLength(1)))) (home-margin edge \(difference.formatted(.number.sign(strategy: .always()).precision(.fractionLength(1)))) pts)")
+        }
+        if let total = line.total {
+            parts.append("Projected total \(projectedTotal.formatted(.number.precision(.fractionLength(1)))) vs market \(total.formatted(.number.precision(.fractionLength(1))))")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    public var movementSummary: String? {
+        guard let previousHomeWinProbability else { return nil }
+        let delta = homeWinProbability - previousHomeWinProbability
+        guard abs(delta) >= 0.005 else { return "Unchanged from the prior forecast." }
+        let team = delta > 0 ? matchup.home.abbreviation : matchup.away.abbreviation
+        return "\(team) win probability moved \(abs(delta).formatted(.percent.precision(.fractionLength(1)))) since the prior refresh."
     }
 
 
