@@ -10,9 +10,9 @@ The repository-owned Xcode project contains one multiplatform target for macOS, 
 
 ## Persistence and automation
 
-`PredictionRepository` isolates storage. The MVP includes local JSON persistence and a `CloudKitPredictionRepository` that stores the latest encoded forecast bundle in the public CloudKit database. CloudKit must not be enabled until an iCloud container, a signed app target, and entitlements are configured.
+`PredictionRepository` isolates storage. The signed Apple app uses `CloudKitPredictionRepository` to read and write the latest encoded forecast bundle in the public CloudKit database, while non-CloudKit builds retain local JSON persistence.
 
-CloudKit stores and synchronizes records; it does not run unattended scheduled forecasts. GitHub Actions now performs the scheduled computation. Publishing its JSON output to CloudKit remains disabled until the container identifier and server-to-server credentials are configured.
+CloudKit stores and synchronizes records; it does not run unattended scheduled forecasts. GitHub Actions performs the scheduled computation and publishes the app-compatible forecast bundle when the `CLOUDKIT_KEY_ID` and `CLOUDKIT_PRIVATE_KEY` repository secrets are configured.
 
 ## Scheduled cloud worker
 

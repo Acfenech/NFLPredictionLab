@@ -54,6 +54,11 @@ jobs:
           NFL_SEASON: ${{ inputs.season }}
           NFL_WEEK: ${{ inputs.week }}
           FORECAST_OUTPUT_DIR: forecast-output
+          CLOUDKIT_PUBLISH_ENABLED: ${{ secrets.CLOUDKIT_PRIVATE_KEY != '' }}
+          CLOUDKIT_CONTAINER: iCloud.com.acfenech.NFLPredictionLab
+          CLOUDKIT_ENVIRONMENT: development
+          CLOUDKIT_KEY_ID: ${{ secrets.CLOUDKIT_KEY_ID }}
+          CLOUDKIT_PRIVATE_KEY: ${{ secrets.CLOUDKIT_PRIVATE_KEY }}
         run: swift run CloudForecastWorker
 
       - name: Archive forecast artifact
@@ -64,6 +69,3 @@ jobs:
           path: forecast-output/*.json
           if-no-files-found: error
           retention-days: 90
-
-      # CloudKit publishing will be added after the container identifier,
-      # server-to-server key ID, and private key are stored as repository secrets.

@@ -21,8 +21,12 @@ final class AppModel: ObservableObject {
         if let repository {
             self.repository = repository
         } else {
+#if canImport(CloudKit)
+            self.repository = CloudKitPredictionRepository(containerIdentifier: "iCloud.com.acfenech.NFLPredictionLab")
+#else
             let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             self.repository = LocalPredictionRepository(url: base.appending(path: "NFLPredictionLab/predictions.json"))
+#endif
         }
     }
 
@@ -46,7 +50,7 @@ final class AppModel: ObservableObject {
                         home: Self.rated(matchup.home, with: snapshots))
             }
             predictions = await calculate(ratedMatchups, preserving: saved)
-            try await repository.save(predictions)
+            try? await repository.save(predictions)
             gradedPredictions = grade(predictions: predictions, results: results)
             status = missing.isEmpty
                 ? "Current records loaded · nflverse"
