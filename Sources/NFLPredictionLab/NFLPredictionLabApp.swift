@@ -16,10 +16,10 @@ struct DashboardView: View {
 
     var body: some View {
         TabView(selection: $selection) {
-            PredictionsView(predictions: model.predictions, feedStatus: model.status, isRefreshing: model.isRefreshing) { Task { await model.refresh() } }.tabItem { Label("Forecasts", systemImage: "sportscourt") }.tag(0)
+            PredictionsView(predictions: model.predictions, season: model.season, week: model.week, feedStatus: model.status, isRefreshing: model.isRefreshing) { Task { await model.refresh() } }.tabItem { Label("Forecasts", systemImage: "sportscourt") }.tag(0)
             SimulationView(predictions: model.predictions).tabItem { Label("Simulations", systemImage: "waveform.path.ecg") }.tag(1)
             AccuracyView(grades: model.gradedPredictions).tabItem { Label("Accuracy", systemImage: "chart.line.uptrend.xyaxis") }.tag(2)
-            SettingsView().tabItem { Label("Model", systemImage: "slider.horizontal.3") }.tag(3)
+            SettingsView(storageLabel: model.storageLabel, lastUpdated: model.lastUpdated).tabItem { Label("Model", systemImage: "slider.horizontal.3") }.tag(3)
         }
         .frame(minWidth: 760, minHeight: 540)
         .task { await model.refresh() }
@@ -28,6 +28,8 @@ struct DashboardView: View {
 
 struct PredictionsView: View {
     let predictions: [Prediction]
+    let season: Int
+    let week: Int
     let feedStatus: String
     let isRefreshing: Bool
     let refresh: () -> Void
@@ -41,7 +43,8 @@ struct PredictionsView: View {
                         HStack {
                             Text("\(prediction.matchup.away.abbreviation) at \(prediction.matchup.home.abbreviation)").font(.headline)
                             Spacer()
-                            Text("\(prediction.predictedWinner.abbreviation) wins").foregroundStyle(.blue).fontWeight(.semibold)
+                            Text(prediction.confidence < 0.55 ? "Near toss-up" : "\(prediction.predictedWinner.abbreviation) wins")
+                                .foregroundStyle(prediction.confidence < 0.55 ? .orange : .blue).fontWeight(.semibold)
                         }
                         Text("Projected: \(prediction.matchup.away.abbreviation) \(prediction.awayScore, specifier: "%.0f") – \(prediction.matchup.home.abbreviation) \(prediction.homeScore, specifier: "%.0f")")
                         Text(prediction.matchup.kickoff.formatted(date: .abbreviated, time: .shortened))
@@ -51,7 +54,7 @@ struct PredictionsView: View {
                     }.padding(.vertical, 6)
                 }
             }
-            .navigationTitle("Week 6 Forecasts")
+            .navigationTitle(week > 0 ? String(format: "%d Week %d Forecasts", season, week) : "NFL Forecasts")
             .toolbar { Button(action: refresh) { Label("Refresh", systemImage: "arrow.clockwise") }.disabled(isRefreshing) }
             .safeAreaInset(edge: .bottom) {
                 Text(feedStatus).font(.caption).foregroundStyle(.secondary).padding(8)
@@ -80,7 +83,21 @@ struct MatchupDetail: View {
 struct SimulationView: View {
     let predictions: [Prediction]
     var body: some View {
-        NavigationStack { List(predictions) { p in LabeledContent("\(p.matchup.away.abbreviation) at \(p.matchup.home.abbreviation)", value: "\(p.simulations.formatted()) runs") }.navigationTitle("Simulation Center") }
+        NavigationStack {
+            List(predictions) { p in
+                VStack(alignment: .leading, spacing: 5) {
+                    LabeledContent("\(p.matchup.away.abbreviation) at \(p.matchup.home.abbreviation)", value: "\(p.simulations.formatted()) runs")
+                    Text("\(p.matchup.home.abbreviation) win \(p.homeWinProbability.formatted(.percent.precision(.fractionLength(1)))) · Upset \((1 - p.confidence).formatted(.percent.precision(.fractionLength(1))))")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let s = p.simulationSummary {
+                        Text("80% range: \(p.matchup.away.abbreviation) \(s.awayLow.formatted(.number.precision(.fractionLength(0))))–\(s.awayHigh.formatted(.number.precision(.fractionLength(0)))) · \(p.matchup.home.abbreviation) \(s.homeLow.formatted(.number.precision(.fractionLength(0))))–\(s.homeHigh.formatted(.number.precision(.fractionLength(0))))")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text("Most common score: \(p.matchup.away.abbreviation) \(s.mostLikelyAwayScore) – \(p.matchup.home.abbreviation) \(s.mostLikelyHomeScore)")
+                            .font(.caption)
+                    }
+                }.padding(.vertical, 4)
+            }.navigationTitle("Simulation Center")
+        }
     }
 }
 
@@ -105,12 +122,17 @@ struct AccuracyView: View {
 }
 
 struct SettingsView: View {
-    @State private var mode = PersistenceMode.local
+    let storageLabel: String
+    let lastUpdated: Date?
     var body: some View {
         NavigationStack {
             Form {
-                Section("Model") { LabeledContent("Version", value: "MVP 0.1"); LabeledContent("Objective", value: "50% winner · 50% score"); LabeledContent("Runs per matchup", value: "10,000") }
-                Section("Persistence") { Picker("Storage", selection: $mode) { ForEach(PersistenceMode.allCases, id: \.self) { Text($0.rawValue) } }; Text("CloudKit sync requires an Apple developer team, an iCloud container, and signed entitlements.").font(.footnote).foregroundStyle(.secondary) }
+                Section("Model") { LabeledContent("Version", value: "MVP 0.2"); LabeledContent("Objective", value: "50% winner · 50% score"); LabeledContent("Runs per matchup", value: "10,000") }
+                Section("Persistence") {
+                    LabeledContent("Storage", value: storageLabel)
+                    if let lastUpdated { LabeledContent("Forecast generated", value: lastUpdated.formatted(date: .abbreviated, time: .shortened)) }
+                    Text("GitHub Actions runs the scheduled forecast; CloudKit synchronizes the published results.").font(.footnote).foregroundStyle(.secondary)
+                }
             }.navigationTitle("Model Control")
         }
     }

@@ -16,9 +16,16 @@ public struct TeamSnapshot: Sendable, Hashable {
 }
 
 public protocol TeamStatsFeed: Sendable {
+    func currentSeasonWeek(referenceDate: Date) async throws -> (season: Int, week: Int)
     func upcomingMatchups(season: Int, week: Int) async throws -> [Matchup]
     func snapshots(season: Int, week: Int) async throws -> [String: TeamSnapshot]
     func completedResults(season: Int, week: Int) async throws -> [GameResult]
+}
+
+public extension TeamStatsFeed {
+    func currentSeasonWeek(referenceDate: Date = .now) async throws -> (season: Int, week: Int) {
+        throw StatsFeedError.missingFields("current NFL season and week")
+    }
 }
 
 public enum StatsFeedError: Error, CustomStringConvertible {
@@ -51,6 +58,14 @@ public extension URLRequest {
 /// It supplies current records; a licensed provider can replace it behind TeamStatsFeed.
 public struct ESPNScoreboardFeed: TeamStatsFeed {
     public init() {}
+
+    public func currentSeasonWeek(referenceDate: Date = .now) async throws -> (season: Int, week: Int) {
+        let guessedSeason = Calendar(identifier: .gregorian).component(.year, from: referenceDate)
+        for week in 1...18 where !(try await upcomingMatchups(season: guessedSeason, week: week)).isEmpty {
+            return (guessedSeason, week)
+        }
+        throw StatsFeedError.missingFields("a current ESPN NFL week")
+    }
 
     public func upcomingMatchups(season: Int, week: Int) async throws -> [Matchup] {
         let events = try await events(season: season, week: week)

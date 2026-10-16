@@ -42,11 +42,12 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
     public let homeWinProbability: Double
     public let simulations: Int
     public let generatedAt: Date
+    public let simulationSummary: SimulationSummary?
 
     public var predictedWinner: Team { homeWinProbability >= 0.5 ? matchup.home : matchup.away }
     public var confidence: Double { max(homeWinProbability, 1 - homeWinProbability) }
 
-    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now) {
+    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now, simulationSummary: SimulationSummary? = nil) {
         self.id = id
         self.matchup = matchup
         self.homeScore = homeScore
@@ -54,6 +55,26 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
         self.homeWinProbability = homeWinProbability
         self.simulations = simulations
         self.generatedAt = generatedAt
+        self.simulationSummary = simulationSummary
+    }
+}
+
+public struct SimulationSummary: Codable, Hashable, Sendable {
+    public let awayLow: Double
+    public let awayHigh: Double
+    public let homeLow: Double
+    public let homeHigh: Double
+    public let mostLikelyAwayScore: Int
+    public let mostLikelyHomeScore: Int
+
+    public init(awayLow: Double, awayHigh: Double, homeLow: Double, homeHigh: Double,
+                mostLikelyAwayScore: Int, mostLikelyHomeScore: Int) {
+        self.awayLow = awayLow
+        self.awayHigh = awayHigh
+        self.homeLow = homeLow
+        self.homeHigh = homeHigh
+        self.mostLikelyAwayScore = mostLikelyAwayScore
+        self.mostLikelyHomeScore = mostLikelyHomeScore
     }
 }
 

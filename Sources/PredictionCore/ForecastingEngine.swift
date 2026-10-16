@@ -25,6 +25,11 @@ public struct ForecastingEngine: Sendable {
         var homeWinCredits = 0.0
         var homeTotal = 0.0
         var awayTotal = 0.0
+        var homeScores: [Double] = []
+        var awayScores: [Double] = []
+        var scorePairs: [String: Int] = [:]
+        homeScores.reserveCapacity(count)
+        awayScores.reserveCapacity(count)
 
         for _ in 0..<count {
             // A shared pace factor introduces realistic score correlation; team-specific
@@ -34,16 +39,31 @@ public struct ForecastingEngine: Sendable {
             let away = max(0, expectedAway + pace + gaussian(using: &rng) * 8.2)
             homeTotal += home
             awayTotal += away
+            homeScores.append(home)
+            awayScores.append(away)
+            scorePairs["\(Int(away.rounded()))-\(Int(home.rounded()))", default: 0] += 1
             if home > away { homeWinCredits += 1 }
             else if home == away { homeWinCredits += 0.5 }
         }
+
+        homeScores.sort()
+        awayScores.sort()
+        let lowIndex = Int(Double(count - 1) * 0.10)
+        let highIndex = Int(Double(count - 1) * 0.90)
+        let likely = scorePairs.max { $0.value < $1.value }?.key.split(separator: "-").compactMap { Int($0) } ?? [0, 0]
+        let summary = SimulationSummary(
+            awayLow: awayScores[lowIndex], awayHigh: awayScores[highIndex],
+            homeLow: homeScores[lowIndex], homeHigh: homeScores[highIndex],
+            mostLikelyAwayScore: likely[0], mostLikelyHomeScore: likely[1]
+        )
 
         return Prediction(
             matchup: matchup,
             homeScore: homeTotal / Double(count),
             awayScore: awayTotal / Double(count),
             homeWinProbability: homeWinCredits / Double(count),
-            simulations: count
+            simulations: count,
+            simulationSummary: summary
         )
     }
 

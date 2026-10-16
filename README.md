@@ -6,7 +6,7 @@ The app and cloud worker use nflverse's automatically updated schedule/results r
 
 ## Apple app target
 
-The repository-owned Xcode project contains one multiplatform target for macOS, iPhone, and iPad. Its bundle identifier is `com.acfenech.NFLPredictionLab`, its development team is configured, and its CloudKit-ready entitlements name `iCloud.com.acfenech.NFLPredictionLab`. The container still needs to be created or selected in Signing & Capabilities before CloudKit persistence is enabled.
+The repository-owned Xcode project contains one multiplatform target for macOS, iPhone, and iPad. Its bundle identifier is `com.acfenech.NFLPredictionLab`, its development team is configured, and CloudKit persistence uses `iCloud.com.acfenech.NFLPredictionLab` in the development environment.
 
 ## Persistence and automation
 
@@ -16,4 +16,4 @@ CloudKit stores and synchronizes records; it does not run unattended scheduled f
 
 ## Scheduled cloud worker
 
-`.github/workflows/forecast.yml` runs tests and the `CloudForecastWorker` at 8 AM America/Detroit on Tuesday, Thursday, Saturday, and Sunday, with manual runs supported. Forecast JSON is retained as a private GitHub Actions artifact for 90 days. CloudKit publishing remains disabled until its container and server-to-server secrets are configured.
+`.github/workflows/forecast.yml` runs tests and the `CloudForecastWorker` at 8 AM America/Detroit on Tuesday, Thursday, Saturday, and Sunday, with manual runs supported. Forecast JSON is retained as a private GitHub Actions artifact for 90 days. Each successful run replaces the `latest` CloudKit bundle and creates a timestamped history snapshot for future backtesting.

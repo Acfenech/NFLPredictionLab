@@ -42,7 +42,7 @@ jobs:
 
       - name: Check out repository
         if: steps.schedule_guard.outputs.run == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Run tests
         if: steps.schedule_guard.outputs.run == 'true'
@@ -63,7 +63,7 @@ jobs:
 
       - name: Archive forecast artifact
         if: steps.schedule_guard.outputs.run == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: nfl-forecast-${{ github.run_number }}
           path: forecast-output/*.json

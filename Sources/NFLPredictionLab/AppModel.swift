@@ -9,9 +9,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var gradedPredictions: [GradedPrediction] = []
     @Published private(set) var status = "Loading current records…"
     @Published private(set) var isRefreshing = false
+    @Published private(set) var season = 0
+    @Published private(set) var week = 0
+    @Published private(set) var lastUpdated: Date?
+    @Published private(set) var storageLabel = "CloudKit"
 
-    private let season = 2026
-    private let week = 6
     private let fallbackMatchups = SampleData.matchups
     private let feed: any TeamStatsFeed
     private let repository: any PredictionRepository
@@ -26,6 +28,7 @@ final class AppModel: ObservableObject {
 #else
             let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             self.repository = LocalPredictionRepository(url: base.appending(path: "NFLPredictionLab/predictions.json"))
+            self.storageLabel = "On this device"
 #endif
         }
     }
@@ -35,8 +38,14 @@ final class AppModel: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
 
-        let saved = (try? await repository.load()) ?? []
+        var notices: [String] = []
+        let saved: [Prediction]
+        do { saved = try await repository.load() }
+        catch { saved = []; notices.append("Cloud load failed") }
         do {
+            let discovered = try await feed.currentSeasonWeek(referenceDate: .now)
+            season = discovered.season
+            week = discovered.week
             async let scheduleRequest = feed.upcomingMatchups(season: season, week: week)
             async let snapshotsRequest = feed.snapshots(season: season, week: week)
             async let resultsRequest = feed.completedResults(season: season, week: week)
@@ -50,15 +59,22 @@ final class AppModel: ObservableObject {
                         home: Self.rated(matchup.home, with: snapshots))
             }
             predictions = await calculate(ratedMatchups, preserving: saved)
-            try? await repository.save(predictions)
+            do { try await repository.save(predictions) }
+            catch { notices.append("Cloud save failed") }
             gradedPredictions = grade(predictions: predictions, results: results)
-            status = missing.isEmpty
+            lastUpdated = predictions.map(\.generatedAt).max()
+            let feedMessage = missing.isEmpty
                 ? "Current records loaded · nflverse"
                 : "Partial stats · \(missing.count) teams use neutral ratings"
+            status = ([feedMessage] + notices).joined(separator: " · ")
         } catch {
             predictions = saved.isEmpty ? await calculate(fallbackMatchups, preserving: []) : saved
-            if saved.isEmpty { try? await repository.save(predictions) }
-            status = "Stats feed unavailable · cached or neutral forecasts shown"
+            if saved.isEmpty {
+                do { try await repository.save(predictions) }
+                catch { notices.append("Cloud save failed") }
+            }
+            lastUpdated = predictions.map(\.generatedAt).max()
+            status = (["Stats feed unavailable · cached or neutral forecasts shown"] + notices).joined(separator: " · ")
         }
     }
 
@@ -75,7 +91,8 @@ final class AppModel: ObservableObject {
                 let fresh = engine.predict(matchup, seed: UInt64(offset + 1))
                 return Prediction(id: prior?.id ?? fresh.id, matchup: matchup, homeScore: fresh.homeScore,
                                   awayScore: fresh.awayScore, homeWinProbability: fresh.homeWinProbability,
-                                  simulations: fresh.simulations, generatedAt: prior?.generatedAt ?? fresh.generatedAt)
+                                  simulations: fresh.simulations, generatedAt: prior?.generatedAt ?? fresh.generatedAt,
+                                  simulationSummary: fresh.simulationSummary)
             }
         }.value
     }

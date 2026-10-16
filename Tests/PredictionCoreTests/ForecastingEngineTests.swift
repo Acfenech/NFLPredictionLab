@@ -17,6 +17,18 @@ import Testing
     #expect(engine.predict(matchup, seed: 99).homeWinProbability == engine.predict(matchup, seed: 99).homeWinProbability)
 }
 
+@Test func simulationIncludesUsefulScoreRanges() {
+    let away = Team(abbreviation: "A", name: "Away", offensiveRating: 0, defensiveRating: 0)
+    let home = Team(abbreviation: "H", name: "Home", offensiveRating: 0, defensiveRating: 0)
+    let prediction = ForecastingEngine().predict(Matchup(week: 1, kickoff: .now, away: away, home: home), simulations: 2_000)
+    let summary = prediction.simulationSummary
+    #expect(summary != nil)
+    #expect(summary!.awayLow <= summary!.awayHigh)
+    #expect(summary!.homeLow <= summary!.homeHigh)
+    #expect(summary!.mostLikelyAwayScore >= 0)
+    #expect(summary!.mostLikelyHomeScore >= 0)
+}
+
 @Test func balancedMetricWeightsWinnerAndScoreEqually() {
     let team = Team(abbreviation: "T", name: "Team", offensiveRating: 0, defensiveRating: 0)
     let matchup = Matchup(week: 1, kickoff: .now, away: team, home: team)

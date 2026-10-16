@@ -30,22 +30,26 @@ struct CloudKitPublisher {
     let keyID: String
     let privateKeyPEM: String
 
-    func publish(_ predictions: [Prediction], generatedAt: Date) async throws {
+    func publish(_ predictions: [Prediction], season: Int, week: Int, generatedAt: Date) async throws {
         let encoder = JSONEncoder()
         let payload = try encoder.encode(predictions).base64EncodedString()
+        let fields: [String: Any] = [
+            "payload": ["value": payload, "type": "BYTES"],
+            "generatedAt": ["value": Int64(generatedAt.timeIntervalSince1970 * 1_000), "type": "TIMESTAMP"],
+            "predictionCount": ["value": predictions.count, "type": "INT64"]
+        ]
+        let archiveName = "\(season)-W\(week)-\(Int64(generatedAt.timeIntervalSince1970))"
         let bodyObject: [String: Any] = [
-            "operations": [[
-                "operationType": "forceReplace",
-                "record": [
-                    "recordType": "ForecastBundle",
-                    "recordName": "latest",
-                    "fields": [
-                        "payload": ["value": payload, "type": "BYTES"],
-                        "generatedAt": ["value": Int64(generatedAt.timeIntervalSince1970 * 1_000), "type": "TIMESTAMP"],
-                        "predictionCount": ["value": predictions.count, "type": "INT64"]
+            "operations": ["latest", archiveName].map { recordName -> [String: Any] in
+                [
+                    "operationType": "forceReplace",
+                    "record": [
+                        "recordType": "ForecastBundle",
+                        "recordName": recordName,
+                        "fields": fields
                     ]
                 ]
-            ]]
+            }
         ]
         let body = try JSONSerialization.data(withJSONObject: bodyObject, options: [.sortedKeys])
         let subpath = "/database/1/\(container)/\(environment)/public/records/modify"
@@ -186,6 +190,6 @@ if environment["CLOUDKIT_PUBLISH_ENABLED"] == "true" {
                                       environment: environment["CLOUDKIT_ENVIRONMENT"] ?? "development",
                                       keyID: keyID,
                                       privateKeyPEM: privateKey)
-    try await publisher.publish(forecastPredictions, generatedAt: generatedAt)
-    print("Published latest forecast bundle to CloudKit \(publisher.environment)")
+    try await publisher.publish(forecastPredictions, season: season, week: week, generatedAt: generatedAt)
+    print("Published latest forecast bundle and history snapshot to CloudKit \(publisher.environment)")
 }
