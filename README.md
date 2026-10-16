@@ -13,3 +13,7 @@ The shared `PredictionCore` library and SwiftUI views are iOS-compatible. The pa
 `PredictionRepository` isolates storage. The MVP includes JSON persistence and a CloudKit-ready mode. CloudKit must not be enabled until an iCloud container and signed entitlements are configured.
 
 CloudKit stores and synchronizes records; it does not run unattended scheduled forecasts. A later scheduled compute worker—such as GitHub Actions or a small serverless job—should fetch data, run the model, and write signed results to CloudKit through an authenticated service boundary. No cloud deployment is currently configured.
+
+## Scheduled cloud worker
+
+`.github/workflows/forecast.yml` runs tests and the `CloudForecastWorker` at 8 AM America/Detroit on Tuesday, Thursday, Saturday, and Sunday, with manual runs supported. Forecast JSON is retained as a private GitHub Actions artifact for 90 days. CloudKit publishing remains disabled until its container and server-to-server secrets are configured.

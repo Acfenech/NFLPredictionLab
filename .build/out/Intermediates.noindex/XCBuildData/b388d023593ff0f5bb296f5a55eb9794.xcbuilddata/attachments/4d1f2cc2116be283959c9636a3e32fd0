@@ -1,4 +1,0 @@
-module PredictionCore {
-header "PredictionCore-Swift.h"
-export *
-}

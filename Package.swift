@@ -6,11 +6,13 @@ let package = Package(
     platforms: [.macOS(.v15), .iOS(.v18)],
     products: [
         .library(name: "PredictionCore", targets: ["PredictionCore"]),
-        .executable(name: "NFLPredictionLab", targets: ["NFLPredictionLab"])
+        .executable(name: "NFLPredictionLab", targets: ["NFLPredictionLab"]),
+        .executable(name: "CloudForecastWorker", targets: ["CloudForecastWorker"])
     ],
     targets: [
         .target(name: "PredictionCore"),
         .executableTarget(name: "NFLPredictionLab", dependencies: ["PredictionCore"]),
+        .executableTarget(name: "CloudForecastWorker", dependencies: ["PredictionCore"]),
         .testTarget(name: "PredictionCoreTests", dependencies: ["PredictionCore"])
     ]
 )

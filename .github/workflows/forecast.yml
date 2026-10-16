@@ -1,0 +1,69 @@
+name: NFL Forecast
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: Optional NFL season override
+        required: false
+        type: string
+      week:
+        description: Optional NFL week override
+        required: false
+        type: string
+  schedule:
+    # Two UTC hours cover 8 AM America/Detroit across daylight-saving changes.
+    # The guard step below allows only the local 8 AM run to continue.
+    - cron: "17 12,13 * * 2,4,6,0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nfl-forecast
+  cancel-in-progress: false
+
+jobs:
+  forecast:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check Eastern schedule
+        id: schedule_guard
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$(TZ=America/Detroit date +%H)" == "08" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out repository
+        if: steps.schedule_guard.outputs.run == 'true'
+        uses: actions/checkout@v4
+
+      - name: Run tests
+        if: steps.schedule_guard.outputs.run == 'true'
+        run: swift test
+
+      - name: Generate forecasts
+        if: steps.schedule_guard.outputs.run == 'true'
+        env:
+          NFL_SEASON: ${{ inputs.season }}
+          NFL_WEEK: ${{ inputs.week }}
+          FORECAST_OUTPUT_DIR: forecast-output
+        run: swift run CloudForecastWorker
+
+      - name: Archive forecast artifact
+        if: steps.schedule_guard.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-forecast-${{ github.run_number }}
+          path: forecast-output/*.json
+          if-no-files-found: error
+          retention-days: 90
+
+      # CloudKit publishing will be added after the container identifier,
+      # server-to-server key ID, and private key are stored as repository secrets.
