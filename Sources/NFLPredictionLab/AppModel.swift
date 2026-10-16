@@ -185,6 +185,11 @@ final class AppModel: ObservableObject {
         UserDefaults.standard.set(teamAdjustments, forKey: "teamAdjustments")
     }
 
+    func resetAllAdjustments() {
+        teamAdjustments = [:]
+        UserDefaults.standard.removeObject(forKey: "teamAdjustments")
+    }
+
     private func calculate(_ matchups: [Matchup], preserving saved: [Prediction]) async -> [Prediction] {
         let configuration = selectedConfiguration
         return await Task.detached {
@@ -195,7 +200,7 @@ final class AppModel: ObservableObject {
                 return Prediction(id: prior?.id ?? fresh.id, matchup: matchup, homeScore: fresh.homeScore,
                                   awayScore: fresh.awayScore, homeWinProbability: fresh.homeWinProbability,
                                   simulations: fresh.simulations, generatedAt: prior?.generatedAt ?? fresh.generatedAt,
-                                  simulationSummary: fresh.simulationSummary, modelVersion: "MVP 0.9",
+                                  simulationSummary: fresh.simulationSummary, modelVersion: "MVP 1.0",
                                   dataSourceUpdatedAt: .now, recalculatedAt: .now, factors: fresh.factors,
                                   previousHomeWinProbability: prior?.homeWinProbability,
                                   previousHomeScore: prior?.homeScore, previousAwayScore: prior?.awayScore,

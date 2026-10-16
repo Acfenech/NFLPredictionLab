@@ -169,7 +169,7 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
     public var predictedWinner: Team { homeWinProbability >= 0.5 ? matchup.home : matchup.away }
     public var confidence: Double { max(homeWinProbability, 1 - homeWinProbability) }
 
-    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now, simulationSummary: SimulationSummary? = nil, modelVersion: String? = "MVP 0.9", dataSourceUpdatedAt: Date? = .now, recalculatedAt: Date? = .now, factors: [ProjectionFactor]? = nil, previousHomeWinProbability: Double? = nil, previousHomeScore: Double? = nil, previousAwayScore: Double? = nil, modelOnlyHomeSpread: Double? = nil, modelOnlyTotal: Double? = nil, previousMarketHomeSpread: Double? = nil, previousMarketTotal: Double? = nil) {
+    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now, simulationSummary: SimulationSummary? = nil, modelVersion: String? = "MVP 1.0", dataSourceUpdatedAt: Date? = .now, recalculatedAt: Date? = .now, factors: [ProjectionFactor]? = nil, previousHomeWinProbability: Double? = nil, previousHomeScore: Double? = nil, previousAwayScore: Double? = nil, modelOnlyHomeSpread: Double? = nil, modelOnlyTotal: Double? = nil, previousMarketHomeSpread: Double? = nil, previousMarketTotal: Double? = nil) {
         self.id = id
         self.matchup = matchup
         self.homeScore = homeScore

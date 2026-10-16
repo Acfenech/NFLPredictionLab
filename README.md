@@ -2,6 +2,10 @@
 
 A private SwiftUI prototype with a shared Swift forecasting engine. Open `NFLPredictionLab.xcodeproj` in Xcode and run the `NFLPredictionLab` scheme on **My Mac** or a connected iPhone.
 
+## MVP 1.0 professional interface
+
+MVP 1.0 introduces an adaptive sidebar, weekly intelligence dashboard, visual matchup cards, a scoreboard-style detail view, probability bars, calibration charts, streamlined betting filters with visible evidence counts, searchable model controls, polished loading states, and a reusable visual design system across macOS and iPhone.
+
 ## MVP 0.9 in-app guidance
 
 MVP 0.9 adds a complete in-app User Guide explaining source provenance, forecast and confidence interpretation, simulations, accuracy metrics, betting labels and validation, refresh/history behavior, manual adjustments, and important limitations.

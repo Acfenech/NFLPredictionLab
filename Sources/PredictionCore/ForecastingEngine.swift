@@ -95,7 +95,7 @@ public struct ForecastingEngine: Sendable {
             awayScore: awayTotal / Double(count),
             homeWinProbability: calibrated(rawHomeProbability),
             simulations: count,
-            simulationSummary: summary, modelVersion: "MVP 0.9", factors: factors,
+            simulationSummary: summary, modelVersion: "MVP 1.0", factors: factors,
             modelOnlyHomeSpread: modelMargin, modelOnlyTotal: modelTotal
         )
     }
