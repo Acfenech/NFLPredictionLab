@@ -481,7 +481,7 @@ private struct ScheduleGame: Sendable {
     let bettingLine: BettingLine
 }
 
-private enum CSV {
+enum CSV {
     static func rows(_ text: String) -> [[String]] {
         var result: [[String]] = []
         var row: [String] = []
@@ -519,5 +519,216 @@ private enum CSV {
         }
         return result
     }
+}
+
+/// Free, keyless inputs used by the private app and GitHub Actions worker.
+/// nflverse supplies injuries, depth charts and team summaries; Open-Meteo
+/// supplies kickoff weather. All calls fail independently so forecasts remain usable.
+public struct NFLVerseFreeDataFeed: Sendable {
+    public init() {}
+
+    public func availabilityImpacts(season: Int, week: Int) async throws -> [String: AvailabilityImpact] {
+        async let injuryText = text(URL(string: "https://github.com/nflverse/nflverse-data/releases/download/injuries/injuries_\(season).csv")!)
+        async let depthText = text(URL(string: "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_\(season).csv")!)
+        let injuries = try await injuryText
+        let depth = try? await depthText
+        let rows = CSV.rows(injuries)
+        guard let header = rows.first else { throw StatsFeedError.missingFields("injury CSV header") }
+        let indexes = Dictionary(uniqueKeysWithValues: header.enumerated().map { ($1, $0) })
+        func value(_ row: [String], _ name: String) -> String {
+            guard let index = indexes[name], row.indices.contains(index) else { return "" }
+            return row[index]
+        }
+
+        let starters = depth.map { startingQuarterbacks(csv: $0) } ?? [:]
+        var entries: [String: [(name: String, position: String, status: String, points: Double)]] = [:]
+        for row in rows.dropFirst() where Int(value(row, "week")) == week && value(row, "season_type") == "REG" {
+            let team = value(row, "team"), position = value(row, "position").uppercased()
+            let status = value(row, "report_status").lowercased()
+            guard !team.isEmpty, !status.isEmpty else { continue }
+            let isStartingQB = position == "QB" && (starters[team] == nil || starters[team] == value(row, "full_name"))
+            let severity: Double
+            if status.contains("out") { severity = isStartingQB ? -6.0 : positionImpact(position) }
+            else if status.contains("doubt") { severity = isStartingQB ? -4.0 : positionImpact(position) * 0.7 }
+            else if status.contains("question") { severity = isStartingQB ? -2.0 : positionImpact(position) * 0.35 }
+            else { continue }
+            entries[team, default: []].append((value(row, "full_name"), position, value(row, "report_status"), severity))
+        }
+        return entries.mapValues { values in
+            let sorted = values.sorted { abs($0.points) > abs($1.points) }
+            let adjustment = max(-10, sorted.map(\.points).reduce(0, +))
+            let note = sorted.prefix(3).map { "\($0.name) (\($0.position), \($0.status))" }.joined(separator: "; ")
+            return AvailabilityImpact(adjustment: adjustment, note: note)
+        }
+    }
+
+    public func advancedMetrics(season: Int, throughWeek: Int) async throws -> [String: AdvancedTeamMetrics] {
+        let csv = try await text(URL(string: "https://github.com/nflverse/nflverse-data/releases/download/stats_team/stats_team_week_\(season).csv")!)
+        let rows = CSV.rows(csv)
+        guard let header = rows.first else { throw StatsFeedError.missingFields("team stats CSV header") }
+        let indexes = Dictionary(uniqueKeysWithValues: header.enumerated().map { ($1, $0) })
+        func value(_ row: [String], _ name: String) -> String {
+            guard let index = indexes[name], row.indices.contains(index) else { return "" }
+            return row[index]
+        }
+        struct Totals { var epa = 0.0; var plays = 0.0; var firstDowns = 0.0; var yards = 0.0; var sacks = 0.0; var turnovers = 0.0 }
+        var offense: [String: Totals] = [:], allowed: [String: Totals] = [:]
+        func merged(_ lhs: Totals, _ rhs: Totals) -> Totals {
+            Totals(epa: lhs.epa + rhs.epa, plays: lhs.plays + rhs.plays,
+                   firstDowns: lhs.firstDowns + rhs.firstDowns, yards: lhs.yards + rhs.yards,
+                   sacks: lhs.sacks + rhs.sacks, turnovers: lhs.turnovers + rhs.turnovers)
+        }
+        for row in rows.dropFirst() where value(row, "season_type") == "REG" && (Int(value(row, "week")) ?? 99) < throughWeek {
+            let team = value(row, "team"), opponent = value(row, "opponent_team")
+            guard !team.isEmpty, !opponent.isEmpty else { continue }
+            let attempts = Double(value(row, "attempts")) ?? 0
+            let carries = Double(value(row, "carries")) ?? 0
+            let plays = max(1, attempts + carries)
+            var total = Totals()
+            total.epa = (Double(value(row, "passing_epa")) ?? 0) + (Double(value(row, "rushing_epa")) ?? 0)
+            total.plays = plays
+            total.firstDowns = (Double(value(row, "passing_first_downs")) ?? 0) + (Double(value(row, "rushing_first_downs")) ?? 0)
+            total.yards = (Double(value(row, "passing_yards")) ?? 0) + (Double(value(row, "rushing_yards")) ?? 0)
+            total.sacks = Double(value(row, "sacks_suffered")) ?? 0
+            total.turnovers = (Double(value(row, "passing_interceptions")) ?? 0) + (Double(value(row, "sack_fumbles_lost")) ?? 0) + (Double(value(row, "rushing_fumbles_lost")) ?? 0)
+            offense[team] = merged(offense[team] ?? Totals(), total)
+            allowed[opponent] = merged(allowed[opponent] ?? Totals(), total)
+        }
+        return Dictionary(uniqueKeysWithValues: offense.map { team, own in
+            let defense = allowed[team] ?? Totals()
+            let offensiveEPA = own.epa / max(1, own.plays)
+            let defensiveEPA = defense.epa / max(1, defense.plays)
+            let success = own.firstDowns / max(1, own.plays)
+            let explosive = min(0.25, max(0.04, own.yards / max(1, own.plays) / 55))
+            let pressure = min(0.55, max(0.15, defense.sacks / max(1, defense.plays) * 4.5 + 0.22))
+            let turnoverRegression = (1.5 - own.turnovers / max(1, own.plays) * 60) * 0.25
+            return (team, AdvancedTeamMetrics(offensiveEPA: offensiveEPA, defensiveEPA: defensiveEPA,
+                successRate: success, explosivePlayRate: explosive, pressureRate: pressure,
+                turnoverRegression: turnoverRegression))
+        })
+    }
+
+    public func gameContexts(for matchups: [Matchup]) async -> [String: GameContext] {
+        await withTaskGroup(of: (String, GameContext).self) { group in
+            for matchup in matchups {
+                group.addTask {
+                    let venue = venueCoordinate(for: matchup)
+                    let away = Self.teamCoordinates[matchup.away.abbreviation] ?? venue
+                    let miles = Int(haversineMiles(from: away, to: venue).rounded())
+                    let travelPoints = miles >= 2_000 ? 1.2 : miles >= 1_000 ? 0.6 : 0
+                    let weather = try? await kickoffWeather(coordinate: venue, kickoff: matchup.kickoff)
+                    return (matchup.gameKey, GameContext(weatherSummary: weather?.summary,
+                        weatherPoints: weather?.points ?? 0, travelMiles: miles,
+                        travelPoints: travelPoints, quarterbackSummary: nil))
+                }
+            }
+            var output: [String: GameContext] = [:]
+            for await (key, context) in group { output[key] = context }
+            return output
+        }
+    }
+
+    private func text(_ url: URL) async throws -> String {
+        let (data, response) = try await URLSession.shared.data(for: .nflStatsRequest(url: url))
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw StatsFeedError.httpStatus(http.statusCode, String(decoding: data.prefix(300), as: UTF8.self))
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private func startingQuarterbacks(csv: String) -> [String: String] {
+        let rows = CSV.rows(csv)
+        guard let header = rows.first else { return [:] }
+        let indexes = Dictionary(uniqueKeysWithValues: header.enumerated().map { ($1, $0) })
+        func value(_ row: [String], _ name: String) -> String {
+            guard let index = indexes[name], row.indices.contains(index) else { return "" }
+            return row[index]
+        }
+        var result: [String: (date: String, name: String)] = [:]
+        for row in rows.dropFirst() {
+            let position = value(row, "pos_abb").isEmpty ? value(row, "position") : value(row, "pos_abb")
+            let rank = Int(value(row, "pos_rank")) ?? Int(value(row, "depth_team")) ?? 99
+            guard position == "QB", rank == 1 else { continue }
+            let team = value(row, "team").isEmpty ? value(row, "club_code") : value(row, "team")
+            let name = value(row, "player_name").isEmpty ? value(row, "full_name") : value(row, "player_name")
+            let date = value(row, "dt")
+            if result[team] == nil || result[team]!.date <= date { result[team] = (date, name) }
+        }
+        return result.mapValues(\.name)
+    }
+
+    private func positionImpact(_ position: String) -> Double {
+        switch position { case "WR", "RB", "TE", "T", "OT", "DE", "DT", "LB", "CB", "S": return -0.7; default: return -0.35 }
+    }
+}
+
+private struct GeoCoordinate: Sendable { let latitude: Double; let longitude: Double }
+
+private extension NFLVerseFreeDataFeed {
+    static let teamCoordinates: [String: GeoCoordinate] = [
+        "ARI": .init(latitude: 33.5276, longitude: -112.2626), "ATL": .init(latitude: 33.7554, longitude: -84.4008),
+        "BAL": .init(latitude: 39.2780, longitude: -76.6227), "BUF": .init(latitude: 42.7738, longitude: -78.7870),
+        "CAR": .init(latitude: 35.2258, longitude: -80.8528), "CHI": .init(latitude: 41.8623, longitude: -87.6167),
+        "CIN": .init(latitude: 39.0954, longitude: -84.5160), "CLE": .init(latitude: 41.5061, longitude: -81.6995),
+        "DAL": .init(latitude: 32.7473, longitude: -97.0945), "DEN": .init(latitude: 39.7439, longitude: -105.0201),
+        "DET": .init(latitude: 42.3400, longitude: -83.0456), "GB": .init(latitude: 44.5013, longitude: -88.0622),
+        "HOU": .init(latitude: 29.6847, longitude: -95.4107), "IND": .init(latitude: 39.7601, longitude: -86.1639),
+        "JAX": .init(latitude: 30.3239, longitude: -81.6373), "KC": .init(latitude: 39.0489, longitude: -94.4839),
+        "LA": .init(latitude: 33.9535, longitude: -118.3392), "LAC": .init(latitude: 33.9535, longitude: -118.3392),
+        "LV": .init(latitude: 36.0908, longitude: -115.1830), "MIA": .init(latitude: 25.9580, longitude: -80.2389),
+        "MIN": .init(latitude: 44.9738, longitude: -93.2577), "NE": .init(latitude: 42.0909, longitude: -71.2643),
+        "NO": .init(latitude: 29.9511, longitude: -90.0812), "NYG": .init(latitude: 40.8135, longitude: -74.0745),
+        "NYJ": .init(latitude: 40.8135, longitude: -74.0745), "PHI": .init(latitude: 39.9008, longitude: -75.1675),
+        "PIT": .init(latitude: 40.4468, longitude: -80.0158), "SEA": .init(latitude: 47.5952, longitude: -122.3316),
+        "SF": .init(latitude: 37.4030, longitude: -121.9700), "TB": .init(latitude: 27.9759, longitude: -82.5033),
+        "TEN": .init(latitude: 36.1665, longitude: -86.7713), "WAS": .init(latitude: 38.9078, longitude: -76.8645)
+    ]
+}
+
+private func venueCoordinate(for matchup: Matchup) -> GeoCoordinate {
+    // The early Sunday international window is played outside the designated home stadium.
+    if Calendar(identifier: .gregorian).component(.hour, from: matchup.kickoff) < 16 {
+        return GeoCoordinate(latitude: 51.5560, longitude: -0.2796)
+    }
+    return NFLVerseFreeDataFeed.teamCoordinates[matchup.home.abbreviation] ?? GeoCoordinate(latitude: 39.5, longitude: -98.35)
+}
+
+private func haversineMiles(from lhs: GeoCoordinate, to rhs: GeoCoordinate) -> Double {
+    let radius = 3_958.8
+    let lat1 = lhs.latitude * .pi / 180, lat2 = rhs.latitude * .pi / 180
+    let dLat = (rhs.latitude - lhs.latitude) * .pi / 180
+    let dLon = (rhs.longitude - lhs.longitude) * .pi / 180
+    let a = sin(dLat / 2) * sin(dLat / 2) + cos(lat1) * cos(lat2) * sin(dLon / 2) * sin(dLon / 2)
+    return radius * 2 * atan2(sqrt(a), sqrt(1 - a))
+}
+
+private func kickoffWeather(coordinate: GeoCoordinate, kickoff: Date) async throws -> (summary: String, points: Double) {
+    var components = URLComponents(string: "https://api.open-meteo.com/v1/forecast")!
+    components.queryItems = [
+        URLQueryItem(name: "latitude", value: String(coordinate.latitude)),
+        URLQueryItem(name: "longitude", value: String(coordinate.longitude)),
+        URLQueryItem(name: "hourly", value: "temperature_2m,precipitation_probability,rain,snowfall,wind_speed_10m"),
+        URLQueryItem(name: "temperature_unit", value: "fahrenheit"), URLQueryItem(name: "wind_speed_unit", value: "mph"),
+        URLQueryItem(name: "timezone", value: "UTC"), URLQueryItem(name: "forecast_days", value: "16")
+    ]
+    let (data, response) = try await URLSession.shared.data(for: .nflStatsRequest(url: components.url!))
+    if let http = response as? HTTPURLResponse, http.statusCode != 200 { throw StatsFeedError.httpStatus(http.statusCode, "Open-Meteo") }
+    guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let hourly = root["hourly"] as? [String: Any], let times = hourly["time"] as? [String] else { throw StatsFeedError.invalidResponse }
+    let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.timeZone = TimeZone(secondsFromGMT: 0); formatter.dateFormat = "yyyy-MM-dd'T'HH:mm"
+    let parsed = times.compactMap(formatter.date(from:))
+    guard let index = parsed.indices.min(by: { abs(parsed[$0].timeIntervalSince(kickoff)) < abs(parsed[$1].timeIntervalSince(kickoff)) }) else { throw StatsFeedError.invalidResponse }
+    func number(_ name: String) -> Double {
+        guard let values = hourly[name] as? [Any], values.indices.contains(index) else { return 0 }
+        return (values[index] as? NSNumber)?.doubleValue ?? 0
+    }
+    let temperature = number("temperature_2m"), wind = number("wind_speed_10m"), precipitation = number("precipitation_probability"), rain = number("rain"), snow = number("snowfall")
+    var points = 0.0
+    if wind >= 20 { points -= 4 } else if wind >= 14 { points -= 2 }
+    if precipitation >= 60 || rain >= 0.08 { points -= 1.5 }
+    if snow > 0 { points -= 2.5 }
+    if temperature <= 25 { points -= 1 }
+    let summary = "\(temperature.formatted(.number.precision(.fractionLength(0))))°F · wind \(wind.formatted(.number.precision(.fractionLength(0)))) mph · precipitation \(precipitation.formatted(.number.precision(.fractionLength(0))))%"
+    return (summary, points)
 }
 

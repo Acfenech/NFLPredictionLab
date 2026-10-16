@@ -206,7 +206,7 @@ struct AccuracyView: View {
                         LabeledContent("Balanced score", value: summary.balancedAccuracy.formatted(.percent.precision(.fractionLength(0))))
                     }
                     Section("Benchmark comparison") {
-                        LabeledContent("MVP 0.6 winner accuracy", value: summary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
+                        LabeledContent("MVP 0.7 winner accuracy", value: summary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
                         LabeledContent("Always choose home", value: homeBaseline.formatted(.percent.precision(.fractionLength(0))))
                         if !marketGrades.isEmpty {
                             LabeledContent("Market favorite", value: (Double(marketCorrect) / Double(marketGrades.count)).formatted(.percent.precision(.fractionLength(0))))
@@ -265,7 +265,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Model") {
-                    LabeledContent("Version", value: "MVP 0.6")
+                    LabeledContent("Version", value: "MVP 0.7")
                     LabeledContent("Objective", value: "50% winner · 50% score")
                     LabeledContent("Runs per matchup", value: "10,000")
                     Text("Separate margin and total estimates combine team ratings with consensus market inputs. Confidence is recalibrated from prior seasons; weather, travel, QB and injury context are included when a configured feed supplies them.").font(.footnote).foregroundStyle(.secondary)
@@ -284,6 +284,12 @@ struct SettingsView: View {
                         LabeledContent("Held-out validation", value: "\(season) · \(summary.games) games")
                     }
                     Text("GitHub Actions runs the scheduled forecast; CloudKit synchronizes the published results.").font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Free data coverage") {
+                    LabeledContent("Advanced metrics", value: "\(model.advancedTeamsLoaded) teams")
+                    LabeledContent("Current injury impacts", value: "\(model.injuryTeamsLoaded) teams")
+                    LabeledContent("Kickoff weather", value: "\(model.weatherGamesLoaded) games")
+                    Text("Sources: nflverse injuries, depth charts and team summaries; Open-Meteo weather; locally calculated stadium travel. No subscription or API key required.").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("QB / injury adjustments") {
                     Text("Adjust a team's offense from −10 to +10 points, then refresh forecasts. Use negative values for an unavailable quarterback or major offensive injuries.").font(.footnote).foregroundStyle(.secondary)

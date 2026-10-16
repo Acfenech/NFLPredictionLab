@@ -193,11 +193,19 @@ if let text = environment["AVAILABILITY_FEED_URL"], let url = URL(string: text) 
     do { loadedAvailabilityImpacts = try await RemoteAvailabilityFeed(url: url).currentImpacts() }
     catch { print("Availability feed unavailable (\(error)); continuing with configured adjustments") }
 }
+if loadedAvailabilityImpacts.isEmpty {
+    do { loadedAvailabilityImpacts = try await NFLVerseFreeDataFeed().availabilityImpacts(season: season, week: week) }
+    catch { print("Free nflverse injury report delayed (\(error)); continuing without injury adjustments") }
+}
 let availabilityImpacts = loadedAvailabilityImpacts
 var loadedAdvancedMetrics: [String: AdvancedTeamMetrics] = [:]
 if let text = environment["ADVANCED_METRICS_FEED_URL"], let url = URL(string: text) {
     do { loadedAdvancedMetrics = try await RemoteAdvancedMetricsFeed(url: url).currentMetrics() }
     catch { print("Advanced metrics feed unavailable (\(error)); continuing with schedule-derived ratings") }
+}
+if loadedAdvancedMetrics.isEmpty {
+    do { loadedAdvancedMetrics = try await NFLVerseFreeDataFeed().advancedMetrics(season: season, throughWeek: week) }
+    catch { print("Free nflverse advanced stats delayed (\(error)); continuing with schedule-derived ratings") }
 }
 let advancedMetrics = loadedAdvancedMetrics
 var loadedGameContexts: [String: GameContext] = [:]
@@ -205,6 +213,8 @@ if let text = environment["GAME_CONTEXT_FEED_URL"], let url = URL(string: text) 
     do { loadedGameContexts = try await RemoteGameContextFeed(url: url).currentContexts() }
     catch { print("Game context feed unavailable (\(error)); continuing without weather/travel context") }
 }
+let freeContexts = await NFLVerseFreeDataFeed().gameContexts(for: matchups)
+for (key, context) in freeContexts where loadedGameContexts[key] == nil { loadedGameContexts[key] = context }
 let gameContexts = loadedGameContexts
 
 let forecastPredictions = matchups.enumerated().map { offset, matchup in
@@ -221,9 +231,17 @@ let forecastPredictions = matchups.enumerated().map { offset, matchup in
                     availabilityNote: impact?.note ?? (manualAdjustment == 0 ? nil : "Configured adjustment"),
                     advancedEfficiency: advancedMetrics[team.abbreviation]?.rating)
     }
+    let baseContext = gameContexts[matchup.gameKey]
+    let quarterbackNotes = [availabilityImpacts[matchup.away.abbreviation]?.note,
+                            availabilityImpacts[matchup.home.abbreviation]?.note]
+        .compactMap { $0 }.joined(separator: " · ")
+    let context = GameContext(weatherSummary: baseContext?.weatherSummary,
+        weatherPoints: baseContext?.weatherPoints ?? 0, travelMiles: baseContext?.travelMiles,
+        travelPoints: baseContext?.travelPoints ?? 0,
+        quarterbackSummary: quarterbackNotes.isEmpty ? nil : quarterbackNotes)
     let ratedMatchup = Matchup(id: matchup.id, week: matchup.week, kickoff: matchup.kickoff,
                                away: rated(matchup.away), home: rated(matchup.home), bettingLine: matchup.bettingLine,
-                               context: gameContexts[matchup.gameKey])
+                               context: context)
     return engine.predict(ratedMatchup, seed: UInt64(offset + 1))
 }
 
@@ -243,7 +261,7 @@ let outputPredictions = forecastPredictions.map { prediction in
                      reviewFlag: prediction.reviewFlag)
 }
 let output = ForecastOutput(generatedAt: generatedAt, season: season, week: week,
-                            source: source, modelVersion: "MVP 0.6", predictions: outputPredictions)
+                            source: source, modelVersion: "MVP 0.7", predictions: outputPredictions)
 let encoder = JSONEncoder()
 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 encoder.dateEncodingStrategy = .iso8601

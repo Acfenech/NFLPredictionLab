@@ -24,6 +24,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var archiveCount = 0
     @Published private(set) var archiveBundles: [[Prediction]] = []
     @Published private(set) var teamAdjustments: [String: Double] = [:]
+    @Published private(set) var injuryTeamsLoaded = 0
+    @Published private(set) var advancedTeamsLoaded = 0
+    @Published private(set) var weatherGamesLoaded = 0
 
     private let fallbackMatchups = SampleData.matchups
     private let feed: any TeamStatsFeed
@@ -31,6 +34,7 @@ final class AppModel: ObservableObject {
     private var availabilityImpacts: [String: AvailabilityImpact] = [:]
     private var advancedMetrics: [String: AdvancedTeamMetrics] = [:]
     private var gameContexts: [String: GameContext] = [:]
+    private let freeDataFeed = NFLVerseFreeDataFeed()
 
     init(feed: any TeamStatsFeed = NFLVerseScheduleFeed(), repository: (any PredictionRepository)? = nil) {
         self.feed = feed
@@ -89,6 +93,19 @@ final class AppModel: ObservableObject {
             async let resultsRequest = feed.completedResults(season: season, week: week)
             async let historicalRequest = feed.historicalGames(seasons: (season - 3)...(season - 1))
             let (liveMatchups, snapshots, results, historical) = try await (scheduleRequest, snapshotsRequest, resultsRequest, historicalRequest)
+            if availabilityImpacts.isEmpty {
+                do { availabilityImpacts = try await freeDataFeed.availabilityImpacts(season: season, week: week) }
+                catch { notices.append("Free injury report delayed") }
+            }
+            if advancedMetrics.isEmpty {
+                do { advancedMetrics = try await freeDataFeed.advancedMetrics(season: season, throughWeek: week) }
+                catch { notices.append("Free advanced stats delayed") }
+            }
+            let freeContexts = await freeDataFeed.gameContexts(for: liveMatchups)
+            for (key, context) in freeContexts where gameContexts[key] == nil { gameContexts[key] = context }
+            injuryTeamsLoaded = availabilityImpacts.count
+            advancedTeamsLoaded = advancedMetrics.count
+            weatherGamesLoaded = gameContexts.values.filter { $0.weatherSummary != nil }.count
             if let report = await Task.detached(operation: { ModelTrainer.trainAndValidate(historical) }).value {
                 selectedConfiguration = report.configuration
                 validationSummary = Backtester.summarize(report.grades)
@@ -101,10 +118,19 @@ final class AppModel: ObservableObject {
             let required = Set(matchups.flatMap { [$0.away.abbreviation, $0.home.abbreviation] })
             let missing = required.subtracting(snapshots.keys)
             let ratedMatchups = matchups.map { matchup in
-                Matchup(id: matchup.id, week: matchup.week, kickoff: matchup.kickoff,
+                let baseContext = gameContexts[matchup.gameKey]
+                let quarterbackNotes = [availabilityImpacts[matchup.away.abbreviation]?.note,
+                                        availabilityImpacts[matchup.home.abbreviation]?.note]
+                    .compactMap { $0 }.joined(separator: " · ")
+                let context = GameContext(weatherSummary: baseContext?.weatherSummary,
+                    weatherPoints: baseContext?.weatherPoints ?? 0,
+                    travelMiles: baseContext?.travelMiles,
+                    travelPoints: baseContext?.travelPoints ?? 0,
+                    quarterbackSummary: quarterbackNotes.isEmpty ? nil : quarterbackNotes)
+                return Matchup(id: matchup.id, week: matchup.week, kickoff: matchup.kickoff,
                         away: rated(matchup.away, with: snapshots),
                         home: rated(matchup.home, with: snapshots), bettingLine: matchup.bettingLine,
-                        context: gameContexts[matchup.gameKey])
+                        context: context)
             }
             predictions = await calculate(ratedMatchups, preserving: saved)
             do { try await repository.save(predictions) }
@@ -124,7 +150,8 @@ final class AppModel: ObservableObject {
             let feedMessage = missing.isEmpty
                 ? "Current records loaded · nflverse"
                 : "Partial stats · \(missing.count) teams use neutral ratings"
-            status = ([feedMessage] + notices).joined(separator: " · ")
+            let coverage = "context: \(advancedTeamsLoaded) metric teams, \(injuryTeamsLoaded) injury teams, \(weatherGamesLoaded) weather games"
+            status = ([feedMessage, coverage] + notices).joined(separator: " · ")
         } catch {
             predictions = saved.isEmpty ? await calculate(fallbackMatchups, preserving: []) : saved
             if saved.isEmpty {
@@ -168,7 +195,7 @@ final class AppModel: ObservableObject {
                 return Prediction(id: prior?.id ?? fresh.id, matchup: matchup, homeScore: fresh.homeScore,
                                   awayScore: fresh.awayScore, homeWinProbability: fresh.homeWinProbability,
                                   simulations: fresh.simulations, generatedAt: prior?.generatedAt ?? fresh.generatedAt,
-                                  simulationSummary: fresh.simulationSummary, modelVersion: "MVP 0.6",
+                                  simulationSummary: fresh.simulationSummary, modelVersion: "MVP 0.7",
                                   dataSourceUpdatedAt: .now, recalculatedAt: .now, factors: fresh.factors,
                                   previousHomeWinProbability: prior?.homeWinProbability,
                                   previousHomeScore: prior?.homeScore, previousAwayScore: prior?.awayScore,
