@@ -46,15 +46,20 @@ public struct ModelConfiguration: Codable, Hashable, Sendable {
     public let formWeight: Double
     public let scoreDeviation: Double
     public let calibrationPoints: [CalibrationPoint]
+    public let marketMarginWeight: Double
+    public let marketTotalWeight: Double
 
     public init(homeFieldAdvantage: Double = 1.6, ratingWeight: Double = 0.5,
                 formWeight: Double = 0.18, scoreDeviation: Double = 8.2,
-                calibrationPoints: [CalibrationPoint] = []) {
+                calibrationPoints: [CalibrationPoint] = [], marketMarginWeight: Double = 0.35,
+                marketTotalWeight: Double = 0.20) {
         self.homeFieldAdvantage = homeFieldAdvantage
         self.ratingWeight = ratingWeight
         self.formWeight = formWeight
         self.scoreDeviation = scoreDeviation
         self.calibrationPoints = calibrationPoints
+        self.marketMarginWeight = marketMarginWeight
+        self.marketTotalWeight = marketTotalWeight
     }
 
     public static let baseline = ModelConfiguration()
@@ -76,14 +81,42 @@ public struct BettingLine: Codable, Hashable, Sendable {
     public let homeMoneyline: Int?
     public let awayMoneyline: Int?
     public let source: String
+    public let openingHomeSpread: Double?
+    public let openingTotal: Double?
+    public let closingHomeSpread: Double?
+    public let closingTotal: Double?
 
     public init(homeSpread: Double? = nil, total: Double? = nil, homeMoneyline: Int? = nil,
-                awayMoneyline: Int? = nil, source: String = "nflverse consensus") {
+                awayMoneyline: Int? = nil, source: String = "nflverse consensus",
+                openingHomeSpread: Double? = nil, openingTotal: Double? = nil,
+                closingHomeSpread: Double? = nil, closingTotal: Double? = nil) {
         self.homeSpread = homeSpread
         self.total = total
         self.homeMoneyline = homeMoneyline
         self.awayMoneyline = awayMoneyline
         self.source = source
+        self.openingHomeSpread = openingHomeSpread
+        self.openingTotal = openingTotal
+        self.closingHomeSpread = closingHomeSpread
+        self.closingTotal = closingTotal
+    }
+}
+
+public struct GameContext: Codable, Hashable, Sendable {
+    public let weatherSummary: String?
+    public let weatherPoints: Double
+    public let travelMiles: Int?
+    public let travelPoints: Double
+    public let quarterbackSummary: String?
+
+    public init(weatherSummary: String? = nil, weatherPoints: Double = 0,
+                travelMiles: Int? = nil, travelPoints: Double = 0,
+                quarterbackSummary: String? = nil) {
+        self.weatherSummary = weatherSummary
+        self.weatherPoints = weatherPoints
+        self.travelMiles = travelMiles
+        self.travelPoints = travelPoints
+        self.quarterbackSummary = quarterbackSummary
     }
 }
 
@@ -94,15 +127,17 @@ public struct Matchup: Codable, Identifiable, Hashable, Sendable {
     public let away: Team
     public let home: Team
     public let bettingLine: BettingLine?
+    public let context: GameContext?
 
     public init(id: UUID = UUID(), week: Int, kickoff: Date, away: Team, home: Team,
-                bettingLine: BettingLine? = nil) {
+                bettingLine: BettingLine? = nil, context: GameContext? = nil) {
         self.id = id
         self.week = week
         self.kickoff = kickoff
         self.away = away
         self.home = home
         self.bettingLine = bettingLine
+        self.context = context
     }
 
     public var gameKey: String {
@@ -126,11 +161,15 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
     public let previousHomeWinProbability: Double?
     public let previousHomeScore: Double?
     public let previousAwayScore: Double?
+    public let modelOnlyHomeSpread: Double?
+    public let modelOnlyTotal: Double?
+    public let previousMarketHomeSpread: Double?
+    public let previousMarketTotal: Double?
 
     public var predictedWinner: Team { homeWinProbability >= 0.5 ? matchup.home : matchup.away }
     public var confidence: Double { max(homeWinProbability, 1 - homeWinProbability) }
 
-    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now, simulationSummary: SimulationSummary? = nil, modelVersion: String? = "MVP 0.5", dataSourceUpdatedAt: Date? = .now, recalculatedAt: Date? = .now, factors: [ProjectionFactor]? = nil, previousHomeWinProbability: Double? = nil, previousHomeScore: Double? = nil, previousAwayScore: Double? = nil) {
+    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now, simulationSummary: SimulationSummary? = nil, modelVersion: String? = "MVP 0.6", dataSourceUpdatedAt: Date? = .now, recalculatedAt: Date? = .now, factors: [ProjectionFactor]? = nil, previousHomeWinProbability: Double? = nil, previousHomeScore: Double? = nil, previousAwayScore: Double? = nil, modelOnlyHomeSpread: Double? = nil, modelOnlyTotal: Double? = nil, previousMarketHomeSpread: Double? = nil, previousMarketTotal: Double? = nil) {
         self.id = id
         self.matchup = matchup
         self.homeScore = homeScore
@@ -146,6 +185,10 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
         self.previousHomeWinProbability = previousHomeWinProbability
         self.previousHomeScore = previousHomeScore
         self.previousAwayScore = previousAwayScore
+        self.modelOnlyHomeSpread = modelOnlyHomeSpread
+        self.modelOnlyTotal = modelOnlyTotal
+        self.previousMarketHomeSpread = previousMarketHomeSpread
+        self.previousMarketTotal = previousMarketTotal
     }
 
     public var projectedHomeSpread: Double { homeScore - awayScore }
@@ -172,6 +215,31 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
         guard abs(delta) >= 0.005 else { return "Unchanged from the prior forecast." }
         let team = delta > 0 ? matchup.home.abbreviation : matchup.away.abbreviation
         return "\(team) win probability moved \(abs(delta).formatted(.percent.precision(.fractionLength(1)))) since the prior refresh."
+    }
+
+    public var lineMovementSummary: String? {
+        guard let line = matchup.bettingLine else { return nil }
+        let priorSpread = line.openingHomeSpread ?? previousMarketHomeSpread
+        let priorTotal = line.openingTotal ?? previousMarketTotal
+        var parts: [String] = []
+        if let priorSpread, let current = line.homeSpread, abs(current - priorSpread) >= 0.1 {
+            parts.append("spread \(priorSpread.formatted(.number.sign(strategy: .always()).precision(.fractionLength(1)))) → \(current.formatted(.number.sign(strategy: .always()).precision(.fractionLength(1))))")
+        }
+        if let priorTotal, let current = line.total, abs(current - priorTotal) >= 0.1 {
+            parts.append("total \(priorTotal.formatted(.number.precision(.fractionLength(1)))) → \(current.formatted(.number.precision(.fractionLength(1))))")
+        }
+        return parts.isEmpty ? nil : "Market movement: " + parts.joined(separator: " · ")
+    }
+
+    public var reviewFlag: String? {
+        guard let line = matchup.bettingLine else { return nil }
+        let marginGap = line.homeSpread.map { abs(projectedHomeSpread - $0) } ?? 0
+        let totalGap = line.total.map { abs(projectedTotal - $0) } ?? 0
+        guard marginGap >= 4 || totalGap >= 6 else { return nil }
+        var reasons: [String] = []
+        if marginGap >= 4 { reasons.append("side differs by \(marginGap.formatted(.number.precision(.fractionLength(1)))) points") }
+        if totalGap >= 6 { reasons.append("total differs by \(totalGap.formatted(.number.precision(.fractionLength(1)))) points") }
+        return "Review recommended: " + reasons.joined(separator: " and ") + "."
     }
 
 
@@ -315,11 +383,15 @@ public struct ModelValidationReport: Sendable {
     public let trainingGames: Int
     public let validationSeason: Int
     public let grades: [GradedPrediction]
+    public let rollingGrades: [GradedPrediction]
+    public let rollingSeasons: [Int]
 
-    public init(configuration: ModelConfiguration, trainingGames: Int, validationSeason: Int, grades: [GradedPrediction]) {
+    public init(configuration: ModelConfiguration, trainingGames: Int, validationSeason: Int, grades: [GradedPrediction], rollingGrades: [GradedPrediction] = [], rollingSeasons: [Int] = []) {
         self.configuration = configuration
         self.trainingGames = trainingGames
         self.validationSeason = validationSeason
         self.grades = grades
+        self.rollingGrades = rollingGrades
+        self.rollingSeasons = rollingSeasons
     }
 }

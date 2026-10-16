@@ -28,8 +28,18 @@ public struct ForecastingEngine: Sendable {
         let restEdge = Double((matchup.home.restDays ?? 7) - (matchup.away.restDays ?? 7)) * 0.12
         let availabilityEdge = (matchup.home.availabilityAdjustment ?? 0) - (matchup.away.availabilityAdjustment ?? 0)
         let advancedEdge = (matchup.home.advancedEfficiency ?? 0) - (matchup.away.advancedEfficiency ?? 0)
-        let expectedHome = max(3, leagueAverage + homeMatchupEdge + configuration.homeFieldAdvantage + formEdge / 2 + restEdge / 2 + availabilityEdge / 2 + advancedEdge / 2)
-        let expectedAway = max(3, leagueAverage + awayMatchupEdge - formEdge / 2 - restEdge / 2 - availabilityEdge / 2 - advancedEdge / 2)
+        let weatherPoints = matchup.context?.weatherPoints ?? 0
+        let travelEdge = matchup.context?.travelPoints ?? 0
+        let modelHome = max(3, leagueAverage + homeMatchupEdge + configuration.homeFieldAdvantage + formEdge / 2 + restEdge / 2 + availabilityEdge / 2 + advancedEdge / 2 + travelEdge / 2 + weatherPoints / 2)
+        let modelAway = max(3, leagueAverage + awayMatchupEdge - formEdge / 2 - restEdge / 2 - availabilityEdge / 2 - advancedEdge / 2 - travelEdge / 2 + weatherPoints / 2)
+        let modelMargin = modelHome - modelAway
+        let modelTotal = modelHome + modelAway
+        let marketMarginWeight = matchup.bettingLine?.homeSpread == nil ? 0 : configuration.marketMarginWeight
+        let marketTotalWeight = matchup.bettingLine?.total == nil ? 0 : configuration.marketTotalWeight
+        let expectedMargin = modelMargin * (1 - marketMarginWeight) + (matchup.bettingLine?.homeSpread ?? modelMargin) * marketMarginWeight
+        let expectedTotal = modelTotal * (1 - marketTotalWeight) + (matchup.bettingLine?.total ?? modelTotal) * marketTotalWeight
+        let expectedHome = max(3, (expectedTotal + expectedMargin) / 2)
+        let expectedAway = max(3, (expectedTotal - expectedMargin) / 2)
         let matchupVolatility = configuration.scoreDeviation + min(2.5, abs(homeMatchupEdge - awayMatchupEdge) * 0.12)
         var rng = SeededGenerator(seed: seed)
         var homeWinCredits = 0.0
@@ -73,8 +83,10 @@ public struct ForecastingEngine: Sendable {
             ProjectionFactor(name: "Recent form", detail: "Recency-weighted scoring margin contributes \(formEdge.formatted(.number.sign(strategy: .always()).precision(.fractionLength(1)))) points to the home edge.", homeEdge: formEdge),
             ProjectionFactor(name: "Rest", detail: "Rest differential contributes \(restEdge.formatted(.number.sign(strategy: .always()).precision(.fractionLength(1)))) points.", homeEdge: restEdge),
             ProjectionFactor(name: "Home field", detail: "Home-field baseline contributes \(configuration.homeFieldAdvantage.formatted(.number.precision(.fractionLength(1)))) points.", homeEdge: configuration.homeFieldAdvantage),
-            ProjectionFactor(name: "QB / injuries", detail: matchup.home.availabilityNote ?? matchup.away.availabilityNote ?? "No confirmed availability adjustment.", homeEdge: availabilityEdge)
-            ,ProjectionFactor(name: "Play-by-play efficiency", detail: advancedEdge == 0 ? "No external EPA/success-rate edge is currently configured." : "EPA, success, explosive-play, pressure, and turnover-regression inputs contribute \(advancedEdge.formatted(signedOneDecimal)) points.", homeEdge: advancedEdge)
+            ProjectionFactor(name: "QB / injuries", detail: matchup.context?.quarterbackSummary ?? matchup.home.availabilityNote ?? matchup.away.availabilityNote ?? "No confirmed availability adjustment.", homeEdge: availabilityEdge),
+            ProjectionFactor(name: "Play-by-play efficiency", detail: advancedEdge == 0 ? "No external EPA/success-rate edge is currently configured." : "EPA, success, explosive-play, pressure, and turnover-regression inputs contribute \(advancedEdge.formatted(signedOneDecimal)) points.", homeEdge: advancedEdge),
+            ProjectionFactor(name: "Weather / travel", detail: matchup.context?.weatherSummary ?? (matchup.context?.travelMiles.map { "Away travel: \($0.formatted()) miles." } ?? "No material weather or travel adjustment."), homeEdge: travelEdge),
+            ProjectionFactor(name: "Market ensemble", detail: matchup.bettingLine == nil ? "Market inputs unavailable; projection is model-only." : "Consensus spread receives \((marketMarginWeight).formatted(.percent.precision(.fractionLength(0)))) weight and total receives \((marketTotalWeight).formatted(.percent.precision(.fractionLength(0)))) weight.", homeEdge: expectedMargin - modelMargin)
         ]
         let rawHomeProbability = homeWinCredits / Double(count)
         return Prediction(
@@ -83,7 +95,8 @@ public struct ForecastingEngine: Sendable {
             awayScore: awayTotal / Double(count),
             homeWinProbability: calibrated(rawHomeProbability),
             simulations: count,
-            simulationSummary: summary, modelVersion: "MVP 0.5", factors: factors
+            simulationSummary: summary, modelVersion: "MVP 0.6", factors: factors,
+            modelOnlyHomeSpread: modelMargin, modelOnlyTotal: modelTotal
         )
     }
 
@@ -115,9 +128,9 @@ public enum ModelTrainer {
         let validation = games.filter { $0.season == validationSeason }
         guard !training.isEmpty, !validation.isEmpty else { return nil }
         let candidates = [
-            ModelConfiguration(homeFieldAdvantage: 1.2, ratingWeight: 0.45, formWeight: 0.12, scoreDeviation: 8.5),
+            ModelConfiguration(homeFieldAdvantage: 1.2, ratingWeight: 0.45, formWeight: 0.12, scoreDeviation: 8.5, marketMarginWeight: 0.25, marketTotalWeight: 0.15),
             .baseline,
-            ModelConfiguration(homeFieldAdvantage: 1.8, ratingWeight: 0.55, formWeight: 0.22, scoreDeviation: 7.8)
+            ModelConfiguration(homeFieldAdvantage: 1.8, ratingWeight: 0.55, formWeight: 0.22, scoreDeviation: 7.8, marketMarginWeight: 0.45, marketTotalWeight: 0.30)
         ]
         func grades(_ sample: [HistoricalGame], _ config: ModelConfiguration) -> [GradedPrediction] {
             let engine = ForecastingEngine(configuration: config)
@@ -135,9 +148,26 @@ public enum ModelTrainer {
                                             ratingWeight: selected.ratingWeight,
                                             formWeight: selected.formWeight,
                                             scoreDeviation: selected.scoreDeviation,
-                                            calibrationPoints: ProbabilityCalibrator.fit(trainingGrades))
+                                            calibrationPoints: ProbabilityCalibrator.fit(trainingGrades),
+                                            marketMarginWeight: selected.marketMarginWeight,
+                                            marketTotalWeight: selected.marketTotalWeight)
+        var rollingGrades: [GradedPrediction] = []
+        var rollingSeasons: [Int] = []
+        for heldOut in seasons.dropFirst() {
+            let prior = games.filter { $0.season < heldOut }
+            let fold = games.filter { $0.season == heldOut }
+            guard !prior.isEmpty, !fold.isEmpty else { continue }
+            let foldPoints = ProbabilityCalibrator.fit(grades(prior, selected))
+            let foldConfiguration = ModelConfiguration(homeFieldAdvantage: selected.homeFieldAdvantage,
+                ratingWeight: selected.ratingWeight, formWeight: selected.formWeight,
+                scoreDeviation: selected.scoreDeviation, calibrationPoints: foldPoints,
+                marketMarginWeight: selected.marketMarginWeight, marketTotalWeight: selected.marketTotalWeight)
+            rollingGrades.append(contentsOf: grades(fold, foldConfiguration))
+            rollingSeasons.append(heldOut)
+        }
         return ModelValidationReport(configuration: calibrated, trainingGames: training.count,
-                                     validationSeason: validationSeason, grades: grades(validation, calibrated))
+                                     validationSeason: validationSeason, grades: grades(validation, calibrated),
+                                     rollingGrades: rollingGrades, rollingSeasons: rollingSeasons)
     }
 }
 

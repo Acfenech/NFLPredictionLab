@@ -18,6 +18,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var validationSeason: Int?
     @Published private(set) var trainingGames = 0
     @Published private(set) var selectedConfiguration = ModelConfiguration.baseline
+    @Published private(set) var rollingValidationSummary: BacktestSummary?
+    @Published private(set) var rollingValidationSeasons: [Int] = []
     @Published private(set) var storageLabel = "CloudKit"
     @Published private(set) var archiveCount = 0
     @Published private(set) var archiveBundles: [[Prediction]] = []
@@ -28,6 +30,7 @@ final class AppModel: ObservableObject {
     private let repository: any PredictionRepository
     private var availabilityImpacts: [String: AvailabilityImpact] = [:]
     private var advancedMetrics: [String: AdvancedTeamMetrics] = [:]
+    private var gameContexts: [String: GameContext] = [:]
 
     init(feed: any TeamStatsFeed = NFLVerseScheduleFeed(), repository: (any PredictionRepository)? = nil) {
         self.feed = feed
@@ -77,6 +80,10 @@ final class AppModel: ObservableObject {
                 do { advancedMetrics = try await RemoteAdvancedMetricsFeed(url: url).currentMetrics() }
                 catch { notices.append("Advanced metrics feed unavailable") }
             }
+            if let text = ProcessInfo.processInfo.environment["GAME_CONTEXT_FEED_URL"], let url = URL(string: text) {
+                do { gameContexts = try await RemoteGameContextFeed(url: url).currentContexts() }
+                catch { notices.append("Weather/travel feed unavailable") }
+            }
             async let scheduleRequest = feed.upcomingMatchups(season: season, week: week)
             async let snapshotsRequest = feed.snapshots(season: season, week: week)
             async let resultsRequest = feed.completedResults(season: season, week: week)
@@ -87,6 +94,8 @@ final class AppModel: ObservableObject {
                 validationSummary = Backtester.summarize(report.grades)
                 validationSeason = report.validationSeason
                 trainingGames = report.trainingGames
+                rollingValidationSummary = Backtester.summarize(report.rollingGrades)
+                rollingValidationSeasons = report.rollingSeasons
             }
             let matchups = liveMatchups
             let required = Set(matchups.flatMap { [$0.away.abbreviation, $0.home.abbreviation] })
@@ -94,7 +103,8 @@ final class AppModel: ObservableObject {
             let ratedMatchups = matchups.map { matchup in
                 Matchup(id: matchup.id, week: matchup.week, kickoff: matchup.kickoff,
                         away: rated(matchup.away, with: snapshots),
-                        home: rated(matchup.home, with: snapshots), bettingLine: matchup.bettingLine)
+                        home: rated(matchup.home, with: snapshots), bettingLine: matchup.bettingLine,
+                        context: gameContexts[matchup.gameKey])
             }
             predictions = await calculate(ratedMatchups, preserving: saved)
             do { try await repository.save(predictions) }
@@ -158,10 +168,14 @@ final class AppModel: ObservableObject {
                 return Prediction(id: prior?.id ?? fresh.id, matchup: matchup, homeScore: fresh.homeScore,
                                   awayScore: fresh.awayScore, homeWinProbability: fresh.homeWinProbability,
                                   simulations: fresh.simulations, generatedAt: prior?.generatedAt ?? fresh.generatedAt,
-                                  simulationSummary: fresh.simulationSummary, modelVersion: "MVP 0.5",
+                                  simulationSummary: fresh.simulationSummary, modelVersion: "MVP 0.6",
                                   dataSourceUpdatedAt: .now, recalculatedAt: .now, factors: fresh.factors,
                                   previousHomeWinProbability: prior?.homeWinProbability,
-                                  previousHomeScore: prior?.homeScore, previousAwayScore: prior?.awayScore)
+                                  previousHomeScore: prior?.homeScore, previousAwayScore: prior?.awayScore,
+                                  modelOnlyHomeSpread: fresh.modelOnlyHomeSpread,
+                                  modelOnlyTotal: fresh.modelOnlyTotal,
+                                  previousMarketHomeSpread: prior?.matchup.bettingLine?.homeSpread,
+                                  previousMarketTotal: prior?.matchup.bettingLine?.total)
             }
         }.value
     }

@@ -4,6 +4,12 @@ A private SwiftUI prototype with a shared Swift forecasting engine. Open `NFLPre
 
 The app and cloud worker use nflverse's automatically updated schedule/results release. Team strength combines recency-weighted scoring, defense, and opponent quality, with optional quarterback/injury adjustments. ESPN remains a fallback for the cloud worker. If both sources fail, the app visibly falls back to cached or neutral forecasts. The engine runs 10,000 Monte Carlo trials per matchup and the grading metric weights winner correctness and score accuracy equally.
 
+## MVP 0.6 market-aware forecasts
+
+MVP 0.6 retains a visible model-only baseline, then blends separate margin and total estimates with consensus market inputs. It also adds probability recalibration, opening/current/closing line fields, line-movement summaries, rolling-season validation, uncertainty ranges, and automatic review flags when a projection differs materially from the market.
+
+Optional `GAME_CONTEXT_FEED_URL` data is keyed by `Matchup.gameKey` and can supply weather, travel distance, travel adjustment, and confirmed quarterback context. If it is not configured, forecasting continues safely and reports that no material context adjustment was available. The same variable can be configured in Xcode and GitHub Actions alongside `AVAILABILITY_FEED_URL` and `ADVANCED_METRICS_FEED_URL`.
+
 ## MVP 0.4 validation and explanations
 
 The model now also includes recent scoring-margin form, rest differential, home field, and provider-neutral player availability. Every forecast carries a factor-by-factor explanation and a plain-language confidence justification.

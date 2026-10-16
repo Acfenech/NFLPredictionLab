@@ -62,6 +62,7 @@ jobs:
           TEAM_ADJUSTMENTS_JSON: ${{ vars.TEAM_ADJUSTMENTS_JSON }}
           AVAILABILITY_FEED_URL: ${{ vars.AVAILABILITY_FEED_URL }}
           ADVANCED_METRICS_FEED_URL: ${{ vars.ADVANCED_METRICS_FEED_URL }}
+          GAME_CONTEXT_FEED_URL: ${{ vars.GAME_CONTEXT_FEED_URL }}
         run: swift run CloudForecastWorker
 
       - name: Archive forecast artifact

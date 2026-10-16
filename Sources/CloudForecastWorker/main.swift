@@ -18,6 +18,9 @@ struct OutputPrediction: Codable {
     let projectedTotal: Double
     let marketHomeMargin: Double?
     let marketTotal: Double?
+    let modelOnlyHomeMargin: Double?
+    let modelOnlyTotal: Double?
+    let reviewFlag: String?
 }
 
 struct ForecastOutput: Codable {
@@ -197,6 +200,12 @@ if let text = environment["ADVANCED_METRICS_FEED_URL"], let url = URL(string: te
     catch { print("Advanced metrics feed unavailable (\(error)); continuing with schedule-derived ratings") }
 }
 let advancedMetrics = loadedAdvancedMetrics
+var loadedGameContexts: [String: GameContext] = [:]
+if let text = environment["GAME_CONTEXT_FEED_URL"], let url = URL(string: text) {
+    do { loadedGameContexts = try await RemoteGameContextFeed(url: url).currentContexts() }
+    catch { print("Game context feed unavailable (\(error)); continuing without weather/travel context") }
+}
+let gameContexts = loadedGameContexts
 
 let forecastPredictions = matchups.enumerated().map { offset, matchup in
     func rated(_ team: Team) -> Team {
@@ -213,7 +222,8 @@ let forecastPredictions = matchups.enumerated().map { offset, matchup in
                     advancedEfficiency: advancedMetrics[team.abbreviation]?.rating)
     }
     let ratedMatchup = Matchup(id: matchup.id, week: matchup.week, kickoff: matchup.kickoff,
-                               away: rated(matchup.away), home: rated(matchup.home), bettingLine: matchup.bettingLine)
+                               away: rated(matchup.away), home: rated(matchup.home), bettingLine: matchup.bettingLine,
+                               context: gameContexts[matchup.gameKey])
     return engine.predict(ratedMatchup, seed: UInt64(offset + 1))
 }
 
@@ -227,10 +237,13 @@ let outputPredictions = forecastPredictions.map { prediction in
                      projectedHomeMargin: prediction.projectedHomeSpread,
                      projectedTotal: prediction.projectedTotal,
                      marketHomeMargin: prediction.matchup.bettingLine?.homeSpread,
-                     marketTotal: prediction.matchup.bettingLine?.total)
+                     marketTotal: prediction.matchup.bettingLine?.total,
+                     modelOnlyHomeMargin: prediction.modelOnlyHomeSpread,
+                     modelOnlyTotal: prediction.modelOnlyTotal,
+                     reviewFlag: prediction.reviewFlag)
 }
 let output = ForecastOutput(generatedAt: generatedAt, season: season, week: week,
-                            source: source, modelVersion: "MVP 0.5", predictions: outputPredictions)
+                            source: source, modelVersion: "MVP 0.6", predictions: outputPredictions)
 let encoder = JSONEncoder()
 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 encoder.dateEncodingStrategy = .iso8601

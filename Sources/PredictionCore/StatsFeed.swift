@@ -53,6 +53,25 @@ public protocol PlayerAvailabilityFeed: Sendable {
     func currentImpacts() async throws -> [String: AvailabilityImpact]
 }
 
+/// Provider-neutral game context keyed by Matchup.gameKey. This lets a licensed
+/// weather/injury feed plug into both the app and scheduled worker without coupling
+/// the model to one vendor.
+public protocol GameContextFeed: Sendable {
+    func currentContexts() async throws -> [String: GameContext]
+}
+
+public struct RemoteGameContextFeed: GameContextFeed {
+    public let url: URL
+    public init(url: URL) { self.url = url }
+    public func currentContexts() async throws -> [String: GameContext] {
+        let (data, response) = try await URLSession.shared.data(for: .nflStatsRequest(url: url))
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw StatsFeedError.httpStatus(http.statusCode, String(decoding: data.prefix(300), as: UTF8.self))
+        }
+        return try JSONDecoder().decode([String: GameContext].self, from: data)
+    }
+}
+
 public struct AdvancedTeamMetrics: Codable, Hashable, Sendable {
     public let offensiveEPA: Double
     public let defensiveEPA: Double
@@ -426,13 +445,18 @@ public actor NFLVerseScheduleFeed: TeamStatsFeed {
             let dateText = value(row, "gameday")
             let timeText = value(row, "gametime").isEmpty ? "13:00" : value(row, "gametime")
             guard let kickoff = easternDateFormatter.date(from: "\(dateText) \(timeText)") else { return nil }
+            let completed = Int(value(row, "home_score")) != nil
+            let spread = Double(value(row, "spread_line"))
+            let total = Double(value(row, "total_line"))
             return ScheduleGame(season: season, gameType: value(row, "game_type"), week: week,
                                 kickoff: kickoff, away: value(row, "away_team"), home: value(row, "home_team"),
                                 awayScore: Int(value(row, "away_score")), homeScore: Int(value(row, "home_score")),
-                                bettingLine: BettingLine(homeSpread: Double(value(row, "spread_line")),
-                                                         total: Double(value(row, "total_line")),
+                                bettingLine: BettingLine(homeSpread: spread,
+                                                         total: total,
                                                          homeMoneyline: Int(value(row, "home_moneyline")),
-                                                         awayMoneyline: Int(value(row, "away_moneyline"))))
+                                                         awayMoneyline: Int(value(row, "away_moneyline")),
+                                                         closingHomeSpread: completed ? spread : nil,
+                                                         closingTotal: completed ? total : nil))
         }
     }
 

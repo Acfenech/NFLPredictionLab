@@ -20,7 +20,9 @@ struct DashboardView: View {
             SimulationView(predictions: model.predictions).tabItem { Label("Simulations", systemImage: "waveform.path.ecg") }.tag(1)
             AccuracyView(grades: model.gradedPredictions, archiveCount: model.archiveCount,
                          validationSummary: model.validationSummary, validationSeason: model.validationSeason,
-                         trainingGames: model.trainingGames).tabItem { Label("Accuracy", systemImage: "chart.line.uptrend.xyaxis") }.tag(2)
+                         trainingGames: model.trainingGames,
+                         rollingValidationSummary: model.rollingValidationSummary,
+                         rollingValidationSeasons: model.rollingValidationSeasons).tabItem { Label("Accuracy", systemImage: "chart.line.uptrend.xyaxis") }.tag(2)
             HistoryView(bundles: model.archiveBundles).tabItem { Label("History", systemImage: "clock.arrow.circlepath") }.tag(3)
             SettingsView(model: model).tabItem { Label("Model", systemImage: "slider.horizontal.3") }.tag(4)
         }
@@ -60,6 +62,9 @@ struct PredictionsView: View {
                         } else {
                             Text("Market line not posted").font(.caption2).foregroundStyle(.tertiary)
                         }
+                        if let flag = prediction.reviewFlag {
+                            Label(flag, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
+                        }
                     }.padding(.vertical, 6)
                 }
             }
@@ -80,6 +85,9 @@ struct MatchupDetail: View {
                 LabeledContent("Winner", value: prediction.predictedWinner.name)
                 LabeledContent("Score", value: "\(prediction.matchup.away.abbreviation) \(prediction.awayScore.formatted(.number.precision(.fractionLength(0)))) – \(prediction.matchup.home.abbreviation) \(prediction.homeScore.formatted(.number.precision(.fractionLength(0))))")
                 LabeledContent("Home win probability", value: prediction.homeWinProbability.formatted(.percent.precision(.fractionLength(1))))
+                if let margin = prediction.modelOnlyHomeSpread, let total = prediction.modelOnlyTotal {
+                    LabeledContent("Model-only baseline", value: "margin \(margin.formatted(.number.sign(strategy: .always()).precision(.fractionLength(1)))) · total \(total.formatted(.number.precision(.fractionLength(1))))")
+                }
             }
             Section("Matchup intelligence") {
                 LabeledContent("Home offense / defense", value: "\(prediction.matchup.home.offensiveRating.formatted(.number.precision(.fractionLength(1)))) / \(prediction.matchup.home.defensiveRating.formatted(.number.precision(.fractionLength(1))))")
@@ -107,6 +115,19 @@ struct MatchupDetail: View {
                 }
                 if let movement = prediction.movementSummary {
                     Label(movement, systemImage: "arrow.up.arrow.down").font(.caption)
+                }
+                if let movement = prediction.lineMovementSummary {
+                    Label(movement, systemImage: "chart.line.uptrend.xyaxis").font(.caption)
+                }
+                if let flag = prediction.reviewFlag {
+                    Label(flag, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+            }
+            if let context = prediction.matchup.context {
+                Section("Game conditions") {
+                    if let weather = context.weatherSummary { LabeledContent("Weather", value: weather) }
+                    if let miles = context.travelMiles { LabeledContent("Away travel", value: "\(miles.formatted()) miles") }
+                    if let quarterbacks = context.quarterbackSummary { LabeledContent("Quarterbacks", value: quarterbacks) }
                 }
             }
         }.navigationTitle("Matchup")
@@ -140,6 +161,8 @@ struct AccuracyView: View {
     let validationSummary: BacktestSummary?
     let validationSeason: Int?
     let trainingGames: Int
+    let rollingValidationSummary: BacktestSummary?
+    let rollingValidationSeasons: [Int]
     var body: some View {
         NavigationStack {
             if grades.isEmpty {
@@ -152,9 +175,10 @@ struct AccuracyView: View {
                     guard let margin = grade.prediction.matchup.bettingLine?.homeSpread else { return false }
                     return (margin >= 0) == (grade.actualHomeScore > grade.actualAwayScore)
                 }.count
+                let closingGrades = grades.filter { $0.prediction.matchup.bettingLine?.closingHomeSpread != nil }
                 List {
                     if let validationSummary, let validationSeason {
-                        Section("Out-of-sample validation · \(validationSeason)") {
+                        Section("Out-of-sample validation · \(String(validationSeason))") {
                             LabeledContent("Training games", value: trainingGames.formatted())
                             LabeledContent("Validation games", value: validationSummary.games.formatted())
                             LabeledContent("Winner accuracy", value: validationSummary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
@@ -162,6 +186,16 @@ struct AccuracyView: View {
                             LabeledContent("Brier score", value: validationSummary.meanBrierScore.formatted(.number.precision(.fractionLength(3))))
                             Text("Model weights were selected on earlier seasons; this season was held out from tuning.")
                                 .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    if let rollingValidationSummary, !rollingValidationSeasons.isEmpty {
+                        Section("Rolling-season validation") {
+                            LabeledContent("Held-out seasons", value: rollingValidationSeasons.map(String.init).joined(separator: ", "))
+                            LabeledContent("Games", value: rollingValidationSummary.games.formatted())
+                            LabeledContent("Winner accuracy", value: rollingValidationSummary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
+                            LabeledContent("Mean score error", value: rollingValidationSummary.meanAbsoluteScoreError.formatted(.number.precision(.fractionLength(1))))
+                            LabeledContent("Brier score", value: rollingValidationSummary.meanBrierScore.formatted(.number.precision(.fractionLength(3))))
+                            Text("Each season is evaluated using only information from earlier seasons.").font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     Section("Performance") {
@@ -172,11 +206,18 @@ struct AccuracyView: View {
                         LabeledContent("Balanced score", value: summary.balancedAccuracy.formatted(.percent.precision(.fractionLength(0))))
                     }
                     Section("Benchmark comparison") {
-                        LabeledContent("MVP 0.5 winner accuracy", value: summary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
+                        LabeledContent("MVP 0.6 winner accuracy", value: summary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
                         LabeledContent("Always choose home", value: homeBaseline.formatted(.percent.precision(.fractionLength(0))))
                         if !marketGrades.isEmpty {
                             LabeledContent("Market favorite", value: (Double(marketCorrect) / Double(marketGrades.count)).formatted(.percent.precision(.fractionLength(0))))
                             LabeledContent("Games with market lines", value: marketGrades.count.formatted())
+                        }
+                        if !closingGrades.isEmpty {
+                            let closingDifference = closingGrades.compactMap { grade -> Double? in
+                                guard let close = grade.prediction.matchup.bettingLine?.closingHomeSpread else { return nil }
+                                return abs(grade.prediction.projectedHomeSpread - close)
+                            }.reduce(0, +) / Double(closingGrades.count)
+                            LabeledContent("Avg projection vs closing spread", value: "\(closingDifference.formatted(.number.precision(.fractionLength(1)))) pts")
                         }
                     }
                     Section("Calibration") {
@@ -224,10 +265,10 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Model") {
-                    LabeledContent("Version", value: "MVP 0.5")
+                    LabeledContent("Version", value: "MVP 0.6")
                     LabeledContent("Objective", value: "50% winner · 50% score")
                     LabeledContent("Runs per matchup", value: "10,000")
-                    Text("Ratings combine offense, defense, opponent strength, recent form, rest, home field, and available QB/injury adjustments. Weights are selected on prior seasons and checked on a held-out season.").font(.footnote).foregroundStyle(.secondary)
+                    Text("Separate margin and total estimates combine team ratings with consensus market inputs. Confidence is recalibrated from prior seasons; weather, travel, QB and injury context are included when a configured feed supplies them.").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("Persistence") {
                     LabeledContent("Storage", value: model.storageLabel)

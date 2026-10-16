@@ -77,9 +77,40 @@ import Testing
     let away = Team(abbreviation: "A", name: "Away", offensiveRating: -2, defensiveRating: -1, recentForm: -3, restDays: 6)
     let home = Team(abbreviation: "H", name: "Home", offensiveRating: 3, defensiveRating: 2, recentForm: 4, restDays: 9)
     let prediction = ForecastingEngine().predict(Matchup(week: 4, kickoff: .now, away: away, home: home), simulations: 500)
-    #expect(prediction.factors?.count == 6)
+    #expect(prediction.factors?.count == 8)
     #expect(prediction.factors?.contains(where: { $0.name == "Recent form" }) == true)
     #expect(!prediction.confidenceExplanation.isEmpty)
+}
+
+@Test func marketAwareEnsembleMovesProjectionTowardConsensus() {
+    let away = Team(abbreviation: "A", name: "Away", offensiveRating: 0, defensiveRating: 0)
+    let home = Team(abbreviation: "H", name: "Home", offensiveRating: 0, defensiveRating: 0)
+    let noMarket = ForecastingEngine().predict(Matchup(week: 1, kickoff: .now, away: away, home: home), simulations: 1_000, seed: 5)
+    let market = ForecastingEngine().predict(Matchup(week: 1, kickoff: .now, away: away, home: home,
+        bettingLine: BettingLine(homeSpread: 10, total: 52)), simulations: 1_000, seed: 5)
+    #expect(market.projectedHomeSpread > noMarket.projectedHomeSpread)
+    #expect(market.projectedTotal > noMarket.projectedTotal)
+    #expect(market.modelOnlyHomeSpread != nil)
+}
+
+@Test func largeMarketDisagreementIsFlagged() {
+    let team = Team(abbreviation: "T", name: "Team", offensiveRating: 0, defensiveRating: 0)
+    let matchup = Matchup(week: 1, kickoff: .now, away: team, home: team,
+        bettingLine: BettingLine(homeSpread: -7, total: 60))
+    let prediction = Prediction(matchup: matchup, homeScore: 24, awayScore: 20,
+        homeWinProbability: 0.6, simulations: 1)
+    #expect(prediction.reviewFlag != nil)
+}
+
+@Test func gameContextChangesMarginAndTotal() {
+    let team = Team(abbreviation: "T", name: "Team", offensiveRating: 0, defensiveRating: 0)
+    let baseline = ForecastingEngine().predict(Matchup(week: 1, kickoff: .now, away: team, home: team), simulations: 1_000, seed: 9)
+    let context = GameContext(weatherSummary: "Strong wind", weatherPoints: -6,
+                              travelMiles: 2_400, travelPoints: 1.5,
+                              quarterbackSummary: "Starters confirmed")
+    let adjusted = ForecastingEngine().predict(Matchup(week: 1, kickoff: .now, away: team, home: team, context: context), simulations: 1_000, seed: 9)
+    #expect(adjusted.projectedTotal < baseline.projectedTotal)
+    #expect(adjusted.projectedHomeSpread > baseline.projectedHomeSpread)
 }
 
 @Test func betterDefenseSuppressesOpponentScore() {
