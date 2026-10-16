@@ -174,3 +174,27 @@ import Testing
                                 simulations: 1, previousHomeWinProbability: 0.60)
     #expect(prediction.movementSummary?.contains("H win probability moved") == true)
 }
+
+@Test func bettingRecommendationsRequireMeaningfulEdge() {
+    let away = Team(abbreviation: "A", name: "Away", offensiveRating: 0, defensiveRating: 0)
+    let home = Team(abbreviation: "H", name: "Home", offensiveRating: 0, defensiveRating: 0)
+    let line = BettingLine(homeSpread: 2.5, total: 44.5, homeMoneyline: -140, awayMoneyline: 120)
+    let prediction = Prediction(matchup: Matchup(week: 1, kickoff: .now, away: away, home: home, bettingLine: line),
+                                homeScore: 30, awayScore: 20, homeWinProbability: 0.78, simulations: 1)
+    #expect(prediction.bettingRecommendations.contains { $0.kind == .spread && $0.strength == .strong })
+    #expect(prediction.bettingRecommendations.contains { $0.kind == .total && $0.strength != .pass })
+    #expect(prediction.bettingRecommendations.contains { $0.kind == .moneyline && $0.selection.contains("H moneyline") })
+}
+
+@Test func bettingBacktestGradesSpreadTotalAndMoneyline() {
+    let away = Team(abbreviation: "A", name: "Away", offensiveRating: 0, defensiveRating: 0)
+    let home = Team(abbreviation: "H", name: "Home", offensiveRating: 0, defensiveRating: 0)
+    let line = BettingLine(homeSpread: 2.5, total: 44.5, homeMoneyline: -140, awayMoneyline: 120)
+    let prediction = Prediction(matchup: Matchup(week: 1, kickoff: .now, away: away, home: home, bettingLine: line),
+                                homeScore: 30, awayScore: 20, homeWinProbability: 0.78, simulations: 1)
+    let grade = GradedPrediction(prediction: prediction, actualHomeScore: 31, actualAwayScore: 17)
+    let performance = Backtester.bettingPerformance([grade])
+    #expect(performance.graded == 3)
+    #expect(performance.wins == 3)
+    #expect(performance.losses == 0)
+}

@@ -17,17 +17,68 @@ struct DashboardView: View {
     var body: some View {
         TabView(selection: $selection) {
             PredictionsView(predictions: model.predictions, season: model.season, week: model.week, feedStatus: model.status, isRefreshing: model.isRefreshing) { Task { await model.refresh() } }.tabItem { Label("Forecasts", systemImage: "sportscourt") }.tag(0)
-            SimulationView(predictions: model.predictions).tabItem { Label("Simulations", systemImage: "waveform.path.ecg") }.tag(1)
+            BettingView(predictions: model.predictions, grades: model.gradedPredictions).tabItem { Label("Bets", systemImage: "chart.bar.doc.horizontal") }.tag(1)
+            SimulationView(predictions: model.predictions).tabItem { Label("Simulations", systemImage: "waveform.path.ecg") }.tag(2)
             AccuracyView(grades: model.gradedPredictions, archiveCount: model.archiveCount,
                          validationSummary: model.validationSummary, validationSeason: model.validationSeason,
                          trainingGames: model.trainingGames,
                          rollingValidationSummary: model.rollingValidationSummary,
-                         rollingValidationSeasons: model.rollingValidationSeasons).tabItem { Label("Accuracy", systemImage: "chart.line.uptrend.xyaxis") }.tag(2)
-            HistoryView(bundles: model.archiveBundles).tabItem { Label("History", systemImage: "clock.arrow.circlepath") }.tag(3)
-            SettingsView(model: model).tabItem { Label("Model", systemImage: "slider.horizontal.3") }.tag(4)
+                         rollingValidationSeasons: model.rollingValidationSeasons).tabItem { Label("Accuracy", systemImage: "chart.line.uptrend.xyaxis") }.tag(3)
+            HistoryView(bundles: model.archiveBundles).tabItem { Label("History", systemImage: "clock.arrow.circlepath") }.tag(4)
+            SettingsView(model: model).tabItem { Label("Model", systemImage: "slider.horizontal.3") }.tag(5)
         }
         .frame(minWidth: 760, minHeight: 540)
         .task { await model.refresh() }
+    }
+}
+
+struct BettingView: View {
+    let predictions: [Prediction]
+    let grades: [GradedPrediction]
+    private var validatedKinds: Set<BetKind> {
+        Set([BetKind.spread, .total, .moneyline].filter { kind in
+            let performance = Backtester.bettingPerformance(grades, kind: kind, strongOnly: true)
+            return performance.graded >= 30 && performance.winRate >= 0.54
+        })
+    }
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("Recommendations require a measured model edge. A Pass is intentional. Lines can move, and no projection guarantees a result. Use only amounts you can afford to lose.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    if validatedKinds.isEmpty {
+                        Label("No betting market currently passes the validation gate (at least 30 strong-edge samples and 54% wins). Candidate edges remain visible, but are not recommended wagers.", systemImage: "shield.lefthalf.filled")
+                            .foregroundStyle(.orange)
+                    }
+                }
+                ForEach(predictions) { prediction in
+                    Section("\(prediction.matchup.away.abbreviation) at \(prediction.matchup.home.abbreviation)") {
+                        if prediction.bettingRecommendations.isEmpty {
+                            Text("Pass · market line unavailable").foregroundStyle(.secondary)
+                        } else {
+                            ForEach(prediction.bettingRecommendations) { recommendation in
+                                let validated = validatedKinds.contains(recommendation.kind)
+                                let displayStrength: BetStrength = validated ? recommendation.strength : .pass
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Text(recommendation.kind.rawValue).fontWeight(.semibold)
+                                        Spacer()
+                                        Text(validated ? displayStrength.rawValue : "Not validated")
+                                            .foregroundStyle(displayStrength == .strong ? .green : displayStrength == .lean ? .orange : .secondary)
+                                    }
+                                    Text(displayStrength == .pass ? "Pass on \(recommendation.selection)" : recommendation.selection)
+                                    Text(recommendation.rationale).font(.caption).foregroundStyle(.secondary)
+                                }.padding(.vertical, 3)
+                            }
+                        }
+                        if let flag = prediction.reviewFlag {
+                            Label(flag, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
+                        }
+                    }
+                }
+            }.navigationTitle("Betting Analysis")
+        }
     }
 }
 
@@ -206,7 +257,7 @@ struct AccuracyView: View {
                         LabeledContent("Balanced score", value: summary.balancedAccuracy.formatted(.percent.precision(.fractionLength(0))))
                     }
                     Section("Benchmark comparison") {
-                        LabeledContent("MVP 0.7 winner accuracy", value: summary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
+                        LabeledContent("MVP 0.8 winner accuracy", value: summary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
                         LabeledContent("Always choose home", value: homeBaseline.formatted(.percent.precision(.fractionLength(0))))
                         if !marketGrades.isEmpty {
                             LabeledContent("Market favorite", value: (Double(marketCorrect) / Double(marketGrades.count)).formatted(.percent.precision(.fractionLength(0))))
@@ -224,6 +275,24 @@ struct AccuracyView: View {
                         ForEach(Backtester.calibration(grades)) { bucket in
                             LabeledContent("\(bucket.lowerBound.formatted(.percent.precision(.fractionLength(0))))–\(bucket.upperBound.formatted(.percent.precision(.fractionLength(0)))) · \(bucket.games) games",
                                            value: "Observed \(bucket.observedRate.formatted(.percent.precision(.fractionLength(0))))")
+                        }
+                    }
+                    Section("Recommendation backtest") {
+                        let allBets = Backtester.bettingPerformance(grades)
+                        let strongBets = Backtester.bettingPerformance(grades, strongOnly: true)
+                        if allBets.graded == 0 {
+                            Text("No qualifying historical recommendations yet.").foregroundStyle(.secondary)
+                        } else {
+                            LabeledContent("Qualified recommendations", value: allBets.graded.formatted())
+                            LabeledContent("Record", value: "\(allBets.wins)-\(allBets.losses)-\(allBets.pushes)")
+                            LabeledContent("Win rate excluding pushes", value: allBets.winRate.formatted(.percent.precision(.fractionLength(1))))
+                            LabeledContent("Strong-edge record", value: "\(strongBets.wins)-\(strongBets.losses)-\(strongBets.pushes) · \(strongBets.winRate.formatted(.percent.precision(.fractionLength(1))))")
+                            ForEach([BetKind.spread, .total, .moneyline], id: \.self) { kind in
+                                let result = Backtester.bettingPerformance(grades, kind: kind)
+                                let strong = Backtester.bettingPerformance(grades, kind: kind, strongOnly: true)
+                                LabeledContent(kind.rawValue, value: result.graded == 0 ? "—" : "all \(result.winRate.formatted(.percent.precision(.fractionLength(0)))) · strong \(strong.winRate.formatted(.percent.precision(.fractionLength(0)))) (\(strong.graded))")
+                            }
+                            Text("Historical results use the same minimum edge thresholds shown in the Bets screen. They do not include sportsbook limits, line movement after publication, or transaction costs.").font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }.navigationTitle("Accuracy")
@@ -265,7 +334,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Model") {
-                    LabeledContent("Version", value: "MVP 0.7")
+                    LabeledContent("Version", value: "MVP 0.8")
                     LabeledContent("Objective", value: "50% winner · 50% score")
                     LabeledContent("Runs per matchup", value: "10,000")
                     Text("Separate margin and total estimates combine team ratings with consensus market inputs. Confidence is recalibrated from prior seasons; weather, travel, QB and injury context are included when a configured feed supplies them.").font(.footnote).foregroundStyle(.secondary)

@@ -195,7 +195,7 @@ final class AppModel: ObservableObject {
                 return Prediction(id: prior?.id ?? fresh.id, matchup: matchup, homeScore: fresh.homeScore,
                                   awayScore: fresh.awayScore, homeWinProbability: fresh.homeWinProbability,
                                   simulations: fresh.simulations, generatedAt: prior?.generatedAt ?? fresh.generatedAt,
-                                  simulationSummary: fresh.simulationSummary, modelVersion: "MVP 0.7",
+                                  simulationSummary: fresh.simulationSummary, modelVersion: "MVP 0.8",
                                   dataSourceUpdatedAt: .now, recalculatedAt: .now, factors: fresh.factors,
                                   previousHomeWinProbability: prior?.homeWinProbability,
                                   previousHomeScore: prior?.homeScore, previousAwayScore: prior?.awayScore,

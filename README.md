@@ -2,6 +2,10 @@
 
 A private SwiftUI prototype with a shared Swift forecasting engine. Open `NFLPredictionLab.xcodeproj` in Xcode and run the `NFLPredictionLab` scheme on **My Mac** or a connected iPhone.
 
+## MVP 0.8 betting analysis
+
+MVP 0.8 adds spread, moneyline, and total recommendations with Strong edge, Lean, and Pass classifications. Recommendations require minimum model-versus-market edges, explain their rationale, and are graded historically in the Accuracy screen. A market must also clear a validation gate of at least 30 strong-edge samples and a 54% held-out win rate before the UI can label a wager actionable; otherwise candidate edges are visibly marked Not validated and Pass. They are analytical estimates, not guarantees or financial advice.
+
 The app and cloud worker use nflverse's automatically updated schedule/results release. Team strength combines recency-weighted scoring, defense, and opponent quality, with optional quarterback/injury adjustments. ESPN remains a fallback for the cloud worker. If both sources fail, the app visibly falls back to cached or neutral forecasts. The engine runs 10,000 Monte Carlo trials per matchup and the grading metric weights winner correctness and score accuracy equally.
 
 ## MVP 0.7 free live context

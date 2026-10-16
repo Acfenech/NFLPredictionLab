@@ -169,7 +169,7 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
     public var predictedWinner: Team { homeWinProbability >= 0.5 ? matchup.home : matchup.away }
     public var confidence: Double { max(homeWinProbability, 1 - homeWinProbability) }
 
-    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now, simulationSummary: SimulationSummary? = nil, modelVersion: String? = "MVP 0.7", dataSourceUpdatedAt: Date? = .now, recalculatedAt: Date? = .now, factors: [ProjectionFactor]? = nil, previousHomeWinProbability: Double? = nil, previousHomeScore: Double? = nil, previousAwayScore: Double? = nil, modelOnlyHomeSpread: Double? = nil, modelOnlyTotal: Double? = nil, previousMarketHomeSpread: Double? = nil, previousMarketTotal: Double? = nil) {
+    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now, simulationSummary: SimulationSummary? = nil, modelVersion: String? = "MVP 0.8", dataSourceUpdatedAt: Date? = .now, recalculatedAt: Date? = .now, factors: [ProjectionFactor]? = nil, previousHomeWinProbability: Double? = nil, previousHomeScore: Double? = nil, previousAwayScore: Double? = nil, modelOnlyHomeSpread: Double? = nil, modelOnlyTotal: Double? = nil, previousMarketHomeSpread: Double? = nil, previousMarketTotal: Double? = nil) {
         self.id = id
         self.matchup = matchup
         self.homeScore = homeScore
@@ -249,6 +249,75 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
         if confidence < 0.65 { return "Moderate edge: team-strength signals favor \(predictedWinner.abbreviation), but outcome variance remains meaningful." }
         return "Stronger edge: multiple model factors favor \(predictedWinner.abbreviation) by \(edge.formatted(.number.precision(.fractionLength(1)))) projected points."
     }
+
+    public var bettingRecommendations: [BetRecommendation] {
+        guard let line = matchup.bettingLine else { return [] }
+        var recommendations: [BetRecommendation] = []
+        if let marketMargin = line.homeSpread {
+            let edge = projectedHomeSpread - marketMargin
+            let team = edge >= 0 ? matchup.home.abbreviation : matchup.away.abbreviation
+            let conventionalLine = edge >= 0 ? -marketMargin : marketMargin
+            let label = "\(team) \(conventionalLine.formatted(.number.sign(strategy: .always()).precision(.fractionLength(1))))"
+            recommendations.append(BetRecommendation(kind: .spread, selection: label,
+                edge: abs(edge), strength: BetStrength(edge: abs(edge), lean: 2.5, strong: 4.5),
+                rationale: "Projected margin differs from consensus by \(abs(edge).formatted(.number.precision(.fractionLength(1)))) points."))
+        }
+        if let marketTotal = line.total {
+            let edge = projectedTotal - marketTotal
+            let selection = edge >= 0 ? "Over \(marketTotal.formatted(.number.precision(.fractionLength(1))))" : "Under \(marketTotal.formatted(.number.precision(.fractionLength(1))))"
+            recommendations.append(BetRecommendation(kind: .total, selection: selection,
+                edge: abs(edge), strength: BetStrength(edge: abs(edge), lean: 3.5, strong: 6.0),
+                rationale: "Projected total is \(abs(edge).formatted(.number.precision(.fractionLength(1)))) points \(edge >= 0 ? "above" : "below") consensus."))
+        }
+        if let homeOdds = line.homeMoneyline, let awayOdds = line.awayMoneyline {
+            let homeRaw = Self.impliedProbability(homeOdds), awayRaw = Self.impliedProbability(awayOdds)
+            let total = homeRaw + awayRaw
+            let marketHome = total > 0 ? homeRaw / total : 0.5
+            let homeEdge = homeWinProbability - marketHome
+            let chooseHome = homeEdge >= 0
+            let edge = abs(homeEdge)
+            let odds = chooseHome ? homeOdds : awayOdds
+            recommendations.append(BetRecommendation(kind: .moneyline,
+                selection: "\(chooseHome ? matchup.home.abbreviation : matchup.away.abbreviation) moneyline \(odds.formatted(.number.sign(strategy: .always())))",
+                edge: edge * 100, strength: BetStrength(edge: edge, lean: 0.045, strong: 0.075),
+                rationale: "No-vig win probability edge is \(edge.formatted(.percent.precision(.fractionLength(1))))."))
+        }
+        return recommendations.sorted { lhs, rhs in
+            if lhs.strength != rhs.strength { return lhs.strength.sortOrder > rhs.strength.sortOrder }
+            return lhs.edge > rhs.edge
+        }
+    }
+
+    private static func impliedProbability(_ americanOdds: Int) -> Double {
+        americanOdds < 0 ? Double(-americanOdds) / Double(-americanOdds + 100) : 100 / Double(americanOdds + 100)
+    }
+}
+
+public enum BetKind: String, Codable, Hashable, Sendable { case spread = "Spread"; case total = "Total"; case moneyline = "Moneyline" }
+public enum BetStrength: String, Codable, Hashable, Sendable {
+    case pass = "Pass", lean = "Lean", strong = "Strong edge"
+    init(edge: Double, lean: Double, strong: Double) { self = edge >= strong ? .strong : edge >= lean ? .lean : .pass }
+    var sortOrder: Int { self == .strong ? 2 : self == .lean ? 1 : 0 }
+}
+
+public struct BetRecommendation: Identifiable, Codable, Hashable, Sendable {
+    public let kind: BetKind
+    public let selection: String
+    public let edge: Double
+    public let strength: BetStrength
+    public let rationale: String
+    public var id: String { "\(kind.rawValue)-\(selection)" }
+    public init(kind: BetKind, selection: String, edge: Double, strength: BetStrength, rationale: String) {
+        self.kind = kind; self.selection = selection; self.edge = edge; self.strength = strength; self.rationale = rationale
+    }
+}
+
+public struct BettingPerformance: Sendable, Hashable {
+    public let graded: Int
+    public let wins: Int
+    public let losses: Int
+    public let pushes: Int
+    public var winRate: Double { wins + losses == 0 ? 0 : Double(wins) / Double(wins + losses) }
 }
 
 public struct SimulationSummary: Codable, Hashable, Sendable {
@@ -349,6 +418,36 @@ public enum Backtester {
                 observedRate: Double(selected.filter(\.winnerCorrect).count) / Double(selected.count)
             )
         }
+    }
+
+    public static func bettingPerformance(_ grades: [GradedPrediction], kind: BetKind? = nil, strongOnly: Bool = false) -> BettingPerformance {
+        var wins = 0, losses = 0, pushes = 0
+        for grade in grades {
+            let prediction = grade.prediction
+            let actualMargin = Double(grade.actualHomeScore - grade.actualAwayScore)
+            let actualTotal = Double(grade.actualHomeScore + grade.actualAwayScore)
+            for recommendation in prediction.bettingRecommendations where recommendation.strength != .pass && (!strongOnly || recommendation.strength == .strong) && (kind == nil || recommendation.kind == kind) {
+                let result: Int?
+                switch recommendation.kind {
+                case .spread:
+                    guard let market = prediction.matchup.bettingLine?.homeSpread else { continue }
+                    let choseHome = prediction.projectedHomeSpread - market >= 0
+                    let difference = actualMargin - market
+                    result = difference == 0 ? 0 : ((difference > 0) == choseHome ? 1 : -1)
+                case .total:
+                    guard let market = prediction.matchup.bettingLine?.total else { continue }
+                    let choseOver = prediction.projectedTotal >= market
+                    let difference = actualTotal - market
+                    result = difference == 0 ? 0 : ((difference > 0) == choseOver ? 1 : -1)
+                case .moneyline:
+                    let choseHome = recommendation.selection.hasPrefix(prediction.matchup.home.abbreviation + " ")
+                    guard grade.actualHomeScore != grade.actualAwayScore else { result = 0; break }
+                    result = ((grade.actualHomeScore > grade.actualAwayScore) == choseHome) ? 1 : -1
+                }
+                if result == 1 { wins += 1 } else if result == -1 { losses += 1 } else { pushes += 1 }
+            }
+        }
+        return BettingPerformance(graded: wins + losses + pushes, wins: wins, losses: losses, pushes: pushes)
     }
 }
 
