@@ -382,9 +382,24 @@ struct BettingView: View {
     let predictions: [Prediction]
     let grades: [GradedPrediction]
     @ObservedObject var bankroll: BankrollStore
+    private let validationByKind: [BetKind: BetValidationResult]
+    private let evidenceByKind: [BetKind: BettingPerformance]
     @State private var filter = "All"
     @State private var showAllPasses = false
     @State private var showUnvalidatedRecommendations = true
+
+    init(predictions: [Prediction], grades: [GradedPrediction], bankroll: BankrollStore) {
+        self.predictions = predictions
+        self.grades = grades
+        self._bankroll = ObservedObject(wrappedValue: bankroll)
+        let kinds: [BetKind] = [.spread, .total, .moneyline]
+        self.validationByKind = Dictionary(uniqueKeysWithValues: kinds.map { kind in
+            (kind, Backtester.bettingValidation(grades, kind: kind))
+        })
+        self.evidenceByKind = Dictionary(uniqueKeysWithValues: kinds.map { kind in
+            (kind, Backtester.bettingPerformance(grades, kind: kind, strongOnly: true))
+        })
+    }
     private func defaultOdds(for recommendation: BetRecommendation, prediction: Prediction) -> Int {
         guard recommendation.kind == .moneyline, let line = prediction.matchup.bettingLine else { return -110 }
         return recommendation.selection.hasPrefix(prediction.matchup.home.abbreviation)
@@ -403,8 +418,8 @@ struct BettingView: View {
         }
     }
     private var validatedKinds: Set<BetKind> {
-        Set([BetKind.spread, .total, .moneyline].filter { kind in
-            Backtester.bettingValidation(grades, kind: kind).isValidated
+        Set(validationByKind.compactMap { kind, validation in
+            validation.isValidated ? kind : nil
         })
     }
     private var displayedPredictions: [Prediction] {
@@ -414,7 +429,7 @@ struct BettingView: View {
             .sorted { ($0.bettingRecommendations.map(\.edge).max() ?? 0) > ($1.bettingRecommendations.map(\.edge).max() ?? 0) }
             .prefix(5))
     }
-    private var allocations: [RecommendedAllocation] {
+    private func allocations(hasFundableParlay: Bool) -> [RecommendedAllocation] {
         let ranked = predictions.flatMap { prediction in
             prediction.bettingRecommendations.map { (prediction, $0) }
         }.sorted { lhs, rhs in
@@ -435,7 +450,6 @@ struct BettingView: View {
             return strength * concentration * upside
         }
         let totalWeight = weights.reduce(0, +)
-        let hasFundableParlay = parlayPlans.contains { $0.isFundable(showingUnvalidated: showUnvalidatedRecommendations) }
         let available = min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll)) * (hasFundableParlay ? 0.80 : 1.0)
         return zip(eligible, weights).map { pair, weight in
             let (prediction, recommendation) = pair
@@ -491,10 +505,14 @@ struct BettingView: View {
         ]
     }
     var body: some View {
-        let weeklyStake = allocations.map(\.amount).reduce(0, +)
-        let weeklyWinCount = min(allocations.count, max(0, Int(allocations.map(\.modelWinProbability).reduce(0, +).rounded())))
-        let weeklyWinnerIDs = Set(allocations.sorted { $0.modelWinProbability > $1.modelWinProbability }.prefix(weeklyWinCount).map(\.id))
-        let weeklyReturned = allocations.reduce(0) { partial, allocation in
+        let currentParlayPlans = parlayPlans
+        let currentAllocations = allocations(hasFundableParlay: currentParlayPlans.contains {
+            $0.isFundable(showingUnvalidated: showUnvalidatedRecommendations)
+        })
+        let weeklyStake = currentAllocations.map(\.amount).reduce(0, +)
+        let weeklyWinCount = min(currentAllocations.count, max(0, Int(currentAllocations.map(\.modelWinProbability).reduce(0, +).rounded())))
+        let weeklyWinnerIDs = Set(currentAllocations.sorted { $0.modelWinProbability > $1.modelWinProbability }.prefix(weeklyWinCount).map(\.id))
+        let weeklyReturned = currentAllocations.reduce(0) { partial, allocation in
             weeklyWinnerIDs.contains(allocation.id)
                 ? partial + (OddsMath.totalReturn(stake: allocation.amount, american: allocation.odds) ?? 0)
                 : partial
@@ -509,7 +527,7 @@ struct BettingView: View {
                             Text("Suggested stake").font(.caption).foregroundStyle(.secondary)
                         }
                         VStack(alignment: .leading) {
-                            Text(allocations.isEmpty ? "—" : "\(weeklyWinCount)–\(allocations.count - weeklyWinCount)").font(.title2.bold()).monospacedDigit()
+                            Text(currentAllocations.isEmpty ? "—" : "\(weeklyWinCount)–\(currentAllocations.count - weeklyWinCount)").font(.title2.bold()).monospacedDigit()
                             Text("Predicted record").font(.caption).foregroundStyle(.secondary)
                         }
                         VStack(alignment: .leading) {
@@ -636,7 +654,7 @@ struct BettingView: View {
                 }
 
                 Section(showUnvalidatedRecommendations ? "Best available weekly plan" : "Historically validated weekly plan") {
-                    if allocations.isEmpty {
+                    if currentAllocations.isEmpty {
                         Label(showUnvalidatedRecommendations ? "$0 · matchup or market data unavailable" : "$0 · no market passes validation",
                               systemImage: showUnvalidatedRecommendations ? "eye.slash.fill" : "lock.shield.fill")
                             .font(.headline).foregroundStyle(.orange)
@@ -645,9 +663,9 @@ struct BettingView: View {
                              : "The planner will distribute the funded weekly amount only across recommendations that satisfy the historical sample-size and win-rate gate.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
-                        let predictedWinCount = min(allocations.count, max(0, Int(allocations.map(\.modelWinProbability).reduce(0, +).rounded())))
-                        let predictedWinnerIDs = Set(allocations.sorted { $0.modelWinProbability > $1.modelWinProbability }.prefix(predictedWinCount).map(\.id))
-                        ForEach(allocations, id: \.id) { allocation in
+                        let predictedWinCount = min(currentAllocations.count, max(0, Int(currentAllocations.map(\.modelWinProbability).reduce(0, +).rounded())))
+                        let predictedWinnerIDs = Set(currentAllocations.sorted { $0.modelWinProbability > $1.modelWinProbability }.prefix(predictedWinCount).map(\.id))
+                        ForEach(currentAllocations, id: \.id) { allocation in
                             let allocationValidated = validatedKinds.contains(allocation.recommendation.kind)
                             let profit = OddsMath.profit(stake: allocation.amount, american: allocation.odds) ?? 0
                             let totalReturn = OddsMath.totalReturn(stake: allocation.amount, american: allocation.odds) ?? 0
@@ -672,12 +690,12 @@ struct BettingView: View {
                                 }
                             }
                         }
-                        let totalStake = allocations.map(\.amount).reduce(0, +)
-                        let totalProfit = allocations.reduce(0) { partial, allocation in
+                        let totalStake = currentAllocations.map(\.amount).reduce(0, +)
+                        let totalProfit = currentAllocations.reduce(0) { partial, allocation in
                             partial + (OddsMath.profit(stake: allocation.amount, american: allocation.odds) ?? 0)
                         }
                         let totalReturned = totalStake + totalProfit
-                        let predictedReturned = allocations.reduce(0) { partial, allocation in
+                        let predictedReturned = currentAllocations.reduce(0) { partial, allocation in
                             guard predictedWinnerIDs.contains(allocation.id) else { return partial }
                             return partial + (OddsMath.totalReturn(stake: allocation.amount, american: allocation.odds) ?? 0)
                         }
@@ -690,7 +708,7 @@ struct BettingView: View {
                             LabeledContent("Total returned if every bet wins",
                                            value: totalReturned.formatted(.currency(code: "USD")))
                             LabeledContent("Predicted weekly record",
-                                           value: "\(predictedWinCount) wins · \(allocations.count - predictedWinCount) losses")
+                                           value: "\(predictedWinCount) wins · \(currentAllocations.count - predictedWinCount) losses")
                             LabeledContent("Predicted total returned",
                                            value: predictedReturned.formatted(.currency(code: "USD")))
                             LabeledContent("Predicted weekly net",
@@ -702,12 +720,12 @@ struct BettingView: View {
                 }
 
                 Section(showUnvalidatedRecommendations ? "Three speculative parlay plans" : "Three parlay plans") {
-                    let fundableParlayProbabilities = parlayPlans.filter { $0.isFundable(showingUnvalidated: showUnvalidatedRecommendations) }
+                    let fundableParlayProbabilities = currentParlayPlans.filter { $0.isFundable(showingUnvalidated: showUnvalidatedRecommendations) }
                     let predictedParlayWinCount = min(fundableParlayProbabilities.count, max(0, Int(fundableParlayProbabilities.map { $0.legs.map(\.modelWinProbability).reduce(1, *) }.reduce(0, +).rounded())))
                     let predictedParlayWinnerIDs = Set(fundableParlayProbabilities.sorted {
                         $0.legs.map(\.modelWinProbability).reduce(1, *) > $1.legs.map(\.modelWinProbability).reduce(1, *)
                     }.prefix(predictedParlayWinCount).map(\.id))
-                    ForEach(parlayPlans) { parlay in
+                    ForEach(currentParlayPlans) { parlay in
                         let fundedWeeklyAmount = min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll))
                         let riskMultiplier = parlay.id == "lower" ? 1.25 - bankroll.riskLevel * 0.5 : parlay.id == "upside" ? 0.5 + bankroll.riskLevel : 1.0
                         let fundable = parlay.isFundable(showingUnvalidated: showUnvalidatedRecommendations)
@@ -771,7 +789,7 @@ struct BettingView: View {
                         }.padding(.vertical, 5)
                     }
                     let fundedWeeklyAmount = min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll))
-                    let fundedParlays = parlayPlans.filter { $0.isFundable(showingUnvalidated: showUnvalidatedRecommendations) }
+                    let fundedParlays = currentParlayPlans.filter { $0.isFundable(showingUnvalidated: showUnvalidatedRecommendations) }
                     let totalParlayStake = fundedParlays.reduce(0) { partial, parlay in
                         let riskMultiplier = parlay.id == "lower" ? 1.25 - bankroll.riskLevel * 0.5 : parlay.id == "upside" ? 0.5 + bankroll.riskLevel : 1.0
                         return partial + fundedWeeklyAmount * parlay.budgetShare * riskMultiplier
@@ -828,7 +846,7 @@ struct BettingView: View {
                             ForEach(prediction.bettingRecommendations.filter { filter == "All" || $0.kind.rawValue == filter }) { recommendation in
                                 let validated = validatedKinds.contains(recommendation.kind)
                                 let displayStrength: BetStrength = (validated || showUnvalidatedRecommendations) ? recommendation.strength : .pass
-                                let evidence = Backtester.bettingPerformance(grades, kind: recommendation.kind, strongOnly: true)
+                                let evidence = evidenceByKind[recommendation.kind]!
                                 let wagerKey = "\(prediction.matchup.gameKey)-\(recommendation.id)"
                                 let fallbackOdds = defaultOdds(for: recommendation, prediction: prediction)
                                 let enteredStake = bankroll.manualStakes[wagerKey] ?? 0
