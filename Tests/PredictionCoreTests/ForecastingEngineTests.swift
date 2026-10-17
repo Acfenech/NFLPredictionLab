@@ -1,6 +1,12 @@
 import Testing
 @testable import PredictionCore
 
+@Test func historicalValidationUsesTenCompletedSeasons() {
+    let seasons = HistoricalValidationWindow.seasons(before: 2026)
+    #expect(seasons == 2016...2025)
+    #expect(seasons.count == 10)
+}
+
 @Test func americanOddsCalculateProfitReturnAndParlay() {
     #expect(OddsMath.profit(stake: 100, american: 150) == 150)
     #expect(abs((OddsMath.totalReturn(stake: 100, american: -110) ?? 0) - 190.909) < 0.01)

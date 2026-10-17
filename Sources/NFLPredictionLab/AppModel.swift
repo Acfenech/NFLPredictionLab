@@ -105,7 +105,7 @@ final class AppModel: ObservableObject {
             async let scheduleRequest = feed.upcomingMatchups(season: season, week: week)
             async let snapshotsRequest = feed.snapshots(season: season, week: week)
             async let resultsRequest = feed.completedResults(season: season, week: week)
-            async let historicalRequest = feed.historicalGames(seasons: (season - 5)...(season - 1))
+            async let historicalRequest = feed.historicalGames(seasons: HistoricalValidationWindow.seasons(before: season))
             let (liveMatchups, snapshots, results, historical) = try await (scheduleRequest, snapshotsRequest, resultsRequest, historicalRequest)
             if availabilityImpacts.isEmpty {
                 do { availabilityImpacts = try await freeDataFeed.availabilityImpacts(season: season, week: week) }

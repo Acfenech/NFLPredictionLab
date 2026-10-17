@@ -199,7 +199,9 @@ if let apiKey = environment["THE_ODDS_API_KEY"], !apiKey.isEmpty {
         print("The Odds API unavailable (\(error)); continuing with nflverse consensus")
     }
 }
-let historical = (try? await NFLVerseScheduleFeed().historicalGames(seasons: (season - 5)...(season - 1))) ?? []
+let historical = (try? await NFLVerseScheduleFeed().historicalGames(
+    seasons: HistoricalValidationWindow.seasons(before: season)
+)) ?? []
 let validationReport = ModelTrainer.trainAndValidate(historical)
 let engine = ForecastingEngine(configuration: validationReport?.configuration ?? .baseline)
 let forecastSnapshots = snapshots

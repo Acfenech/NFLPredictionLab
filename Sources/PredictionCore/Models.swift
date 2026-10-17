@@ -325,6 +325,17 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
 }
 
 public enum BetKind: String, Codable, Hashable, Sendable { case spread = "Spread"; case total = "Total"; case moneyline = "Moneyline" }
+
+public enum HistoricalValidationWindow {
+    /// A decade balances a useful number of rare strong-edge bets with relevance to
+    /// the current NFL scoring and betting environment.
+    public static let completedSeasons = 10
+
+    public static func seasons(before season: Int) -> ClosedRange<Int> {
+        (season - completedSeasons)...(season - 1)
+    }
+}
+
 public enum BetStrength: String, Codable, Hashable, Sendable {
     case pass = "Pass", lean = "Lean", strong = "Strong edge"
     init(edge: Double, lean: Double, strong: Double) { self = edge >= strong ? .strong : edge >= lean ? .lean : .pass }
