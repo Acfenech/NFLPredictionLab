@@ -617,93 +617,75 @@ struct BettingView: View {
                     Label("This Week’s Decision Summary", systemImage: "chart.bar.fill")
                 }
 
-                Section("Recommendation set") {
-                    Picker("Recommendation set", selection: $showUnvalidatedRecommendations) {
-                        Text("Historically validated").tag(false)
-                        Text("Model-ranked picks").tag(true)
+                Section("Plan configuration") {
+                    HStack {
+                        Label("Recommendation mode", systemImage: "scope")
+                        Spacer()
+                        Picker("Recommendation mode", selection: $showUnvalidatedRecommendations) {
+                            Text("Historically validated").tag(false)
+                            Text("Model-ranked picks").tag(true)
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .frame(width: 175)
                     }
-                    .pickerStyle(.segmented)
-                    if showUnvalidatedRecommendations {
-                        Label("Model-ranked picks are this week’s strongest model opportunities, even when their strategy has not passed historical validation. Historical evidence remains visible beside every pick.", systemImage: "scope")
-                            .font(.callout).foregroundStyle(.orange)
-                    } else {
-                        Text("Off · only historically validated single bets and parlays can receive suggested amounts.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("Bankroll & weekly plan") {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("Available bankroll").font(.caption).foregroundStyle(.secondary)
+                            Text("Bankroll").font(.caption).foregroundStyle(.secondary)
                             HStack {
                                 Text("$")
                                 TextField("Bankroll", value: $bankroll.bankroll, format: .number.precision(.fractionLength(2)))
-                                    .frame(maxWidth: 140)
+                                    .frame(width: 110)
                                     .accessibilityLabel("Available bankroll")
                             }
                         }
                         Spacer()
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("Weekly wager amount").font(.caption).foregroundStyle(.secondary)
+                            Text("Weekly amount").font(.caption).foregroundStyle(.secondary)
                             WeeklyBudgetEditor(value: bankroll.weeklyBudget) { updatedAmount in
                                 bankroll.weeklyBudget = updatedAmount
                             }
                         }
                     }
-                    Text("The suggested bets and returns update only after you select Update or press Return.")
-                        .font(.caption).foregroundStyle(.secondary)
                     HStack {
-                        LabeledContent("User-entered wagers", value: bankroll.manualTotal.formatted(.currency(code: "USD")))
+                        Picker("Risk", selection: riskPreset) {
+                            Text("Conservative").tag(0.15)
+                            Text("Balanced").tag(BankrollStore.recommendedRisk)
+                            Text("Aggressive").tag(0.85)
+                        }.pickerStyle(.menu)
+                        Picker("Return", selection: returnPreset) {
+                            Text("Steady").tag(0.10)
+                            Text("Balanced").tag(BankrollStore.recommendedReturn)
+                            Text("Upside").tag(0.90)
+                        }.pickerStyle(.menu)
                         Spacer()
-                        LabeledContent("Weekly remaining", value: max(0, bankroll.weeklyBudget - bankroll.manualTotal).formatted(.currency(code: "USD")))
+                        Button {
+                            withAnimation { bankroll.resetAllocationPreferences() }
+                        } label: {
+                            Label("Reset", systemImage: "arrow.counterclockwise")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(abs(bankroll.riskLevel - BankrollStore.recommendedRisk) < 0.001 &&
+                                  abs(bankroll.returnLevel - BankrollStore.recommendedReturn) < 0.001)
                     }
+                    HStack {
+                        Text("Entered: \(bankroll.manualTotal.formatted(.currency(code: "USD")))")
+                        Text("·").foregroundStyle(.tertiary)
+                        Text("Remaining: \(max(0, bankroll.weeklyBudget - bankroll.manualTotal).formatted(.currency(code: "USD")))")
+                        Spacer()
+                        Button("Clear", role: .destructive) { bankroll.clearWeeklyWagers() }
+                            .disabled(bankroll.manualTotal == 0)
+                    }.font(.caption)
                     if bankroll.manualTotal > bankroll.weeklyBudget {
                         Label("Entered wagers exceed the weekly amount by \((bankroll.manualTotal - bankroll.weeklyBudget).formatted(.currency(code: "USD"))).", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     }
                     if bankroll.weeklyBudget > bankroll.bankroll {
                         Label("Weekly amount cannot be fully funded by the current bankroll.", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
                     }
-                    Button("Clear weekly wagers", role: .destructive) { bankroll.clearWeeklyWagers() }.disabled(bankroll.manualTotal == 0)
-                }
-
-                Section {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Risk level").fontWeight(.semibold)
-                        Picker("Risk level", selection: riskPreset) {
-                            Text("Conservative").tag(0.15)
-                            Text("Balanced").tag(BankrollStore.recommendedRisk)
-                            Text("Aggressive").tag(0.85)
-                        }
-                        .pickerStyle(.segmented)
-                        Text(riskLabel == "Conservative" ? "Spreads the weekly amount more evenly across eligible bets." : riskLabel == "Aggressive" ? "Concentrates more of the weekly amount in the strongest measured edges." : "Balances diversification with additional weight on stronger edges.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Return target").fontWeight(.semibold)
-                        Picker("Return target", selection: returnPreset) {
-                            Text("Steady").tag(0.10)
-                            Text("Balanced").tag(BankrollStore.recommendedReturn)
-                            Text("Upside").tag(0.90)
-                        }
-                        .pickerStyle(.segmented)
-                        Text(returnLabel == "Steady" ? "Prioritizes steadier payout profiles." : returnLabel == "High upside" ? "Gives more weight to higher-payout markets such as moneylines; it does not improve their probability of winning." : "Balances steadier selections with higher-return opportunities.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                } header: {
-                    HStack {
-                        Text("Recommended allocation controls")
-                        Spacer()
-                        Button {
-                            withAnimation { bankroll.resetAllocationPreferences() }
-                        } label: {
-                            Label("Reset to Recommended", systemImage: "arrow.counterclockwise")
-                                .textCase(nil)
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(abs(bankroll.riskLevel - BankrollStore.recommendedRisk) < 0.001 &&
-                                  abs(bankroll.returnLevel - BankrollStore.recommendedReturn) < 0.001)
-                    }
+                    Text(showUnvalidatedRecommendations
+                         ? "Model-ranked · \(riskLabel) risk · \(returnLabel) return. Select Update after changing the weekly amount."
+                         : "Validated only · \(riskLabel) risk · \(returnLabel) return. Select Update after changing the weekly amount.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
 
                 Section(showUnvalidatedRecommendations ? "Model-ranked weekly plan" : "Historically validated weekly plan") {
