@@ -106,7 +106,8 @@ final class AppModel: ObservableObject {
             injuryTeamsLoaded = availabilityImpacts.count
             advancedTeamsLoaded = advancedMetrics.count
             weatherGamesLoaded = gameContexts.values.filter { $0.weatherSummary != nil }.count
-            if let report = await Task.detached(operation: { ModelTrainer.trainAndValidate(historical) }).value {
+            let historicalValidationReport = await Task.detached(operation: { ModelTrainer.trainAndValidate(historical) }).value
+            if let report = historicalValidationReport {
                 selectedConfiguration = report.configuration
                 validationSummary = Backtester.summarize(report.grades)
                 validationSeason = report.validationSeason
@@ -156,7 +157,12 @@ final class AppModel: ObservableObject {
                     grades.append(contentsOf: grade(predictions: bundle, results: archivedResults))
                 }
             }
-            grades.append(contentsOf: ModelTrainer.trainAndValidate(historical)?.grades ?? [])
+            // Rolling grades contain every season evaluated strictly from prior-season
+            // information, including the newest outer holdout. Using them avoids both
+            // the small-sample newest-season gate and double-counting that season.
+            if let report = historicalValidationReport {
+                grades.append(contentsOf: report.rollingGrades.isEmpty ? report.grades : report.rollingGrades)
+            }
             gradedPredictions = grades
             lastUpdated = predictions.compactMap(\.recalculatedAt).max() ?? predictions.map(\.generatedAt).max()
             sourceUpdatedAt = predictions.compactMap(\.dataSourceUpdatedAt).max()
