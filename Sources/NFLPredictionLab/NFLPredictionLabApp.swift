@@ -186,7 +186,7 @@ struct UserGuideView: View {
                     GuideItem(icon: "lock.shield.fill", title: "Recommended plan", detail: "Allocates money only when a market passes the historical validation gate. If none qualifies, the recommended amount remains $0 regardless of slider settings.")
                     GuideItem(icon: "eye.trianglebadge.exclamationmark", title: "Unvalidated recommendations", detail: "The Betting screen toggle can reveal a separate speculative plan from strong model edges that failed validation. These entries remain orange and explicitly marked Unvalidated; enabling the toggle does not improve their historical performance.")
                     GuideItem(icon: "square.stack.3d.up.fill", title: "Three parlay plans", detail: "Lower Variance uses two side/total legs, Balanced uses three diversified edges, and High Upside uses four legs with extra moneyline preference. Games are not repeated inside one parlay. Suggested stakes require validation unless you explicitly enable speculative recommendations.")
-                    GuideItem(icon: "equal.square.fill", title: "Odds and returns", detail: "Enter the exact American odds shown by your sportsbook before placing a wager. Potential profit excludes the returned stake; total return includes it. Displayed returns are mathematical estimates and change when the price changes.")
+                    GuideItem(icon: "equal.square.fill", title: "Odds and returns", detail: "Each suggested bet shows its profit and total returned if it wins. Profit excludes the returned stake; total returned includes it. Enter the exact American odds shown by your sportsbook before placing a wager because every displayed return changes with the price.")
                 }
 
                 Section("Accuracy terms") {
@@ -289,6 +289,7 @@ private struct RecommendedAllocation: Identifiable {
     let matchup: String
     let recommendation: BetRecommendation
     let amount: Double
+    let odds: Int
 }
 
 private struct ParlayLeg: Identifiable {
@@ -358,7 +359,13 @@ struct BettingView: View {
         return zip(eligible, weights).map { pair, weight in
             let (prediction, recommendation) = pair
             let key = "\(prediction.matchup.gameKey)-\(recommendation.id)"
-            return RecommendedAllocation(id: key, matchup: "\(prediction.matchup.away.abbreviation) at \(prediction.matchup.home.abbreviation)", recommendation: recommendation, amount: totalWeight > 0 ? available * weight / totalWeight : 0)
+            return RecommendedAllocation(
+                id: key,
+                matchup: "\(prediction.matchup.away.abbreviation) at \(prediction.matchup.home.abbreviation)",
+                recommendation: recommendation,
+                amount: totalWeight > 0 ? available * weight / totalWeight : 0,
+                odds: bankroll.odds(for: key, default: defaultOdds(for: recommendation, prediction: prediction))
+            )
         }.sorted { $0.amount > $1.amount }
     }
     private var parlayPlans: [ParlayPlan] {
@@ -482,14 +489,21 @@ struct BettingView: View {
                     } else {
                         ForEach(allocations, id: \.id) { allocation in
                             let allocationValidated = validatedKinds.contains(allocation.recommendation.kind)
+                            let profit = OddsMath.profit(stake: allocation.amount, american: allocation.odds) ?? 0
+                            let totalReturn = OddsMath.totalReturn(stake: allocation.amount, american: allocation.odds) ?? 0
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(allocation.recommendation.selection).fontWeight(.semibold)
                                     Text("\(allocation.matchup) · \(allocation.recommendation.kind.rawValue) · \(allocationValidated ? "Validated" : "Unvalidated")")
                                         .font(.caption).foregroundStyle(allocationValidated ? Color.secondary : Color.orange)
+                                    Text("\(allocation.odds.formatted(.number.sign(strategy: .always()))) odds · If it wins: \(profit.formatted(.currency(code: "USD"))) profit · \(totalReturn.formatted(.currency(code: "USD"))) returned")
+                                        .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
                                 }
                                 Spacer()
-                                Text(allocation.amount.formatted(.currency(code: "USD"))).font(.headline).monospacedDigit()
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text(allocation.amount.formatted(.currency(code: "USD"))).font(.headline).monospacedDigit()
+                                    Text("suggested stake").font(.caption2).foregroundStyle(.secondary)
+                                }
                             }
                         }
                         LabeledContent(showUnvalidatedRecommendations ? "Total speculative" : "Total recommended", value: allocations.map(\.amount).reduce(0, +).formatted(.currency(code: "USD")))
@@ -504,6 +518,9 @@ struct BettingView: View {
                         let suggestedStake = fundable ? fundedWeeklyAmount * parlay.budgetShare * riskMultiplier : 0
                         let parlayKey = "parlay-\(parlay.id)"
                         let calculatedOdds = OddsMath.parlayAmerican(parlay.legs.map(\.odds)) ?? 100
+                        let activeOdds = bankroll.odds(for: parlayKey, default: calculatedOdds)
+                        let suggestedProfit = OddsMath.profit(stake: suggestedStake, american: activeOdds) ?? 0
+                        let suggestedReturn = OddsMath.totalReturn(stake: suggestedStake, american: activeOdds) ?? 0
                         let enteredStake = bankroll.manualStakes[parlayKey] ?? 0
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
@@ -534,6 +551,8 @@ struct BettingView: View {
                                 Spacer()
                                 Text("Suggested \(suggestedStake.formatted(.currency(code: "USD")))").fontWeight(.semibold).monospacedDigit()
                             }
+                            Text("If the suggested parlay wins: \(suggestedProfit.formatted(.currency(code: "USD"))) profit · \(suggestedReturn.formatted(.currency(code: "USD"))) returned at \(activeOdds.formatted(.number.sign(strategy: .always())))")
+                                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                             HStack {
                                 Text("My parlay wager").font(.caption).foregroundStyle(.secondary)
                                 Spacer(); Text("$")

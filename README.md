@@ -22,6 +22,8 @@ The allocation controls include **Reset to Recommended**, which restores the bal
 
 An explicit **Show Unvalidated Recommendations** toggle reveals a separately labeled speculative plan and speculative parlay amounts. It is off by default. Every affected selection remains marked Unvalidated, and the historical gate itself is never weakened or bypassed silently.
 
+Every suggested single bet and parlay also shows the potential profit and total amount returned if it wins, calculated from the suggested stake and the current entered or consensus American odds.
+
 ## MVP 1.0 professional interface
 
 MVP 1.0 introduces an adaptive sidebar, weekly intelligence dashboard, visual matchup cards, a scoreboard-style detail view, probability bars, calibration charts, streamlined betting filters with visible evidence counts, searchable model controls, polished loading states, and a reusable visual design system across macOS and iPhone.
