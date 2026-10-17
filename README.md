@@ -24,6 +24,8 @@ An explicit **Show Unvalidated Recommendations** toggle reveals a separately lab
 
 Every suggested single bet and parlay also shows the potential profit and total amount returned if it wins, calculated from the suggested stake and the current entered or consensus American odds. The weekly-plan and parlay summary totals aggregate stake, anticipated profit, and total returned across their respective recommendations.
 
+The Betting screen also shows a probability-weighted likely result for each recommendation and for both summary totals. Expected net accounts for winning and losing outcomes; expected returned is the average amount expected back, including stake, over many comparable wagers. These are model estimates rather than guarantees.
+
 ## MVP 1.0 professional interface
 
 MVP 1.0 introduces an adaptive sidebar, weekly intelligence dashboard, visual matchup cards, a scoreboard-style detail view, probability bars, calibration charts, streamlined betting filters with visible evidence counts, searchable model controls, polished loading states, and a reusable visual design system across macOS and iPhone.

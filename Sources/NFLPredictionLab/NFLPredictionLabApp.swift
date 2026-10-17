@@ -290,6 +290,7 @@ private struct RecommendedAllocation: Identifiable {
     let recommendation: BetRecommendation
     let amount: Double
     let odds: Int
+    let modelWinProbability: Double
 }
 
 private struct ParlayLeg: Identifiable {
@@ -298,6 +299,7 @@ private struct ParlayLeg: Identifiable {
     let recommendation: BetRecommendation
     let validated: Bool
     let odds: Int
+    let modelWinProbability: Double
 }
 
 private struct ParlayPlan: Identifiable {
@@ -322,6 +324,17 @@ struct BettingView: View {
         guard recommendation.kind == .moneyline, let line = prediction.matchup.bettingLine else { return -110 }
         return recommendation.selection.hasPrefix(prediction.matchup.home.abbreviation)
             ? (line.homeMoneyline ?? -110) : (line.awayMoneyline ?? -110)
+    }
+    private func estimatedWinProbability(for recommendation: BetRecommendation, prediction: Prediction) -> Double {
+        switch recommendation.kind {
+        case .moneyline:
+            return recommendation.selection.hasPrefix(prediction.matchup.home.abbreviation)
+                ? prediction.homeWinProbability : 1 - prediction.homeWinProbability
+        case .spread:
+            return min(0.90, max(0.50, 1 / (1 + exp(-recommendation.edge / 7.0))))
+        case .total:
+            return min(0.90, max(0.50, 1 / (1 + exp(-recommendation.edge / 9.0))))
+        }
     }
     private var validatedKinds: Set<BetKind> {
         Set([BetKind.spread, .total, .moneyline].filter { kind in
@@ -364,7 +377,8 @@ struct BettingView: View {
                 matchup: "\(prediction.matchup.away.abbreviation) at \(prediction.matchup.home.abbreviation)",
                 recommendation: recommendation,
                 amount: totalWeight > 0 ? available * weight / totalWeight : 0,
-                odds: bankroll.odds(for: key, default: defaultOdds(for: recommendation, prediction: prediction))
+                odds: bankroll.odds(for: key, default: defaultOdds(for: recommendation, prediction: prediction)),
+                modelWinProbability: estimatedWinProbability(for: recommendation, prediction: prediction)
             )
         }.sorted { $0.amount > $1.amount }
     }
@@ -377,7 +391,8 @@ struct BettingView: View {
                               matchup: "\(prediction.matchup.away.abbreviation) at \(prediction.matchup.home.abbreviation)",
                               recommendation: recommendation,
                               validated: validatedKinds.contains(recommendation.kind),
-                              odds: defaultOdds(for: recommendation, prediction: prediction))
+                              odds: defaultOdds(for: recommendation, prediction: prediction),
+                              modelWinProbability: estimatedWinProbability(for: recommendation, prediction: prediction))
                 }
         }
         func uniqueGames(_ source: [ParlayLeg], count: Int) -> [ParlayLeg] {
@@ -491,6 +506,8 @@ struct BettingView: View {
                             let allocationValidated = validatedKinds.contains(allocation.recommendation.kind)
                             let profit = OddsMath.profit(stake: allocation.amount, american: allocation.odds) ?? 0
                             let totalReturn = OddsMath.totalReturn(stake: allocation.amount, american: allocation.odds) ?? 0
+                            let expectedNet = allocation.modelWinProbability * profit - (1 - allocation.modelWinProbability) * allocation.amount
+                            let expectedReturned = allocation.modelWinProbability * totalReturn
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(allocation.recommendation.selection).fontWeight(.semibold)
@@ -498,6 +515,8 @@ struct BettingView: View {
                                         .font(.caption).foregroundStyle(allocationValidated ? Color.secondary : Color.orange)
                                     Text("\(allocation.odds.formatted(.number.sign(strategy: .always()))) odds · If it wins: \(profit.formatted(.currency(code: "USD"))) profit · \(totalReturn.formatted(.currency(code: "USD"))) returned")
                                         .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                                    Text("Likely result: \(allocation.modelWinProbability.formatted(.percent.precision(.fractionLength(0)))) model chance · \(expectedNet.formatted(.currency(code: "USD").sign(strategy: .always()))) expected net · \(expectedReturned.formatted(.currency(code: "USD"))) expected returned")
+                                        .font(.caption2).foregroundStyle(expectedNet >= 0 ? Color.green : Color.orange).monospacedDigit()
                                 }
                                 Spacer()
                                 VStack(alignment: .trailing, spacing: 2) {
@@ -511,6 +530,11 @@ struct BettingView: View {
                             partial + (OddsMath.profit(stake: allocation.amount, american: allocation.odds) ?? 0)
                         }
                         let totalReturned = totalStake + totalProfit
+                        let expectedNet = allocations.reduce(0) { partial, allocation in
+                            let profit = OddsMath.profit(stake: allocation.amount, american: allocation.odds) ?? 0
+                            return partial + allocation.modelWinProbability * profit - (1 - allocation.modelWinProbability) * allocation.amount
+                        }
+                        let expectedReturned = totalStake + expectedNet
                         VStack(spacing: 5) {
                             LabeledContent(showUnvalidatedRecommendations ? "Total speculative stake" : "Total recommended stake",
                                            value: totalStake.formatted(.currency(code: "USD")))
@@ -518,6 +542,10 @@ struct BettingView: View {
                                            value: totalProfit.formatted(.currency(code: "USD")))
                             LabeledContent("Total returned if every bet wins",
                                            value: totalReturned.formatted(.currency(code: "USD")))
+                            LabeledContent("Likely result · probability-weighted net",
+                                           value: expectedNet.formatted(.currency(code: "USD").sign(strategy: .always())))
+                            LabeledContent("Likely result · expected returned",
+                                           value: expectedReturned.formatted(.currency(code: "USD")))
                         }
                         .fontWeight(.semibold)
                         .monospacedDigit()
@@ -535,6 +563,9 @@ struct BettingView: View {
                         let activeOdds = bankroll.odds(for: parlayKey, default: calculatedOdds)
                         let suggestedProfit = OddsMath.profit(stake: suggestedStake, american: activeOdds) ?? 0
                         let suggestedReturn = OddsMath.totalReturn(stake: suggestedStake, american: activeOdds) ?? 0
+                        let parlayWinProbability = parlay.legs.isEmpty ? 0 : parlay.legs.map(\.modelWinProbability).reduce(1, *)
+                        let expectedNet = parlayWinProbability * suggestedProfit - (1 - parlayWinProbability) * suggestedStake
+                        let expectedReturned = parlayWinProbability * suggestedReturn
                         let enteredStake = bankroll.manualStakes[parlayKey] ?? 0
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
@@ -567,6 +598,10 @@ struct BettingView: View {
                             }
                             Text("If the suggested parlay wins: \(suggestedProfit.formatted(.currency(code: "USD"))) profit · \(suggestedReturn.formatted(.currency(code: "USD"))) returned at \(activeOdds.formatted(.number.sign(strategy: .always())))")
                                 .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                            Text(parlay.legs.isEmpty
+                                 ? "Likely result: unavailable until legs qualify"
+                                 : "Likely result: \(parlayWinProbability.formatted(.percent.precision(.fractionLength(0)))) model chance · \(expectedNet.formatted(.currency(code: "USD").sign(strategy: .always()))) expected net · \(expectedReturned.formatted(.currency(code: "USD"))) expected returned")
+                                .font(.caption).foregroundStyle(expectedNet >= 0 ? Color.green : Color.orange).monospacedDigit()
                             HStack {
                                 Text("My parlay wager").font(.caption).foregroundStyle(.secondary)
                                 Spacer(); Text("$")
@@ -590,10 +625,21 @@ struct BettingView: View {
                         let activeOdds = bankroll.odds(for: "parlay-\(parlay.id)", default: calculatedOdds)
                         return partial + (OddsMath.profit(stake: stake, american: activeOdds) ?? 0)
                     }
+                    let totalParlayExpectedNet = fundedParlays.reduce(0) { partial, parlay in
+                        let riskMultiplier = parlay.id == "lower" ? 1.25 - bankroll.riskLevel * 0.5 : parlay.id == "upside" ? 0.5 + bankroll.riskLevel : 1.0
+                        let stake = fundedWeeklyAmount * parlay.budgetShare * riskMultiplier
+                        let calculatedOdds = OddsMath.parlayAmerican(parlay.legs.map(\.odds)) ?? 100
+                        let activeOdds = bankroll.odds(for: "parlay-\(parlay.id)", default: calculatedOdds)
+                        let profit = OddsMath.profit(stake: stake, american: activeOdds) ?? 0
+                        let winProbability = parlay.legs.map(\.modelWinProbability).reduce(1, *)
+                        return partial + winProbability * profit - (1 - winProbability) * stake
+                    }
                     VStack(spacing: 5) {
                         LabeledContent("Total suggested parlay stake", value: totalParlayStake.formatted(.currency(code: "USD")))
                         LabeledContent("Anticipated profit if every parlay wins", value: totalParlayProfit.formatted(.currency(code: "USD")))
                         LabeledContent("Total returned if every parlay wins", value: (totalParlayStake + totalParlayProfit).formatted(.currency(code: "USD")))
+                        LabeledContent("Likely result · probability-weighted net", value: totalParlayExpectedNet.formatted(.currency(code: "USD").sign(strategy: .always())))
+                        LabeledContent("Likely result · expected returned", value: (totalParlayStake + totalParlayExpectedNet).formatted(.currency(code: "USD")))
                     }
                     .fontWeight(.semibold)
                     .monospacedDigit()
