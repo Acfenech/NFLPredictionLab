@@ -180,8 +180,8 @@ struct UserGuideView: View {
                 Section("Bankroll planner") {
                     GuideItem(icon: "dollarsign.circle.fill", title: "Bankroll", detail: "Enter the amount reserved for betting. It is stored privately on this device and is never transferred or connected to a sportsbook.")
                     GuideItem(icon: "calendar.badge.clock", title: "Weekly wager amount", detail: "Use the slider for quick changes or type an exact dollar amount. The slider follows the editable bankroll, while user-entered wager fields show how much remains and warn when the plan exceeds the weekly amount or bankroll.")
-                    GuideItem(icon: "slider.horizontal.2.square", title: "Risk level", detail: "Controls how evenly or aggressively the recommended weekly amount is concentrated among validated edges. It does not change the forecast probabilities.")
-                    GuideItem(icon: "arrow.up.right.circle.fill", title: "Return target", detail: "Controls preference for steadier allocations versus higher-upside markets. Higher upside also means greater variance and does not imply better expected results.")
+                    GuideItem(icon: "slider.horizontal.2.square", title: "Risk level", detail: "Choose Conservative, Balanced or Aggressive to control how strongly the weekly amount is concentrated in the largest model edges. It does not change forecast probabilities.")
+                    GuideItem(icon: "arrow.up.right.circle.fill", title: "Return target", detail: "Choose Steady, Balanced or Upside to control preference for steadier allocations versus higher-payout markets. Higher upside also means greater variance and does not imply better expected results.")
                     GuideItem(icon: "arrow.counterclockwise.circle.fill", title: "Reset to Recommended", detail: "Restores the balanced planning defaults: 35% risk and 40% return preference. It does not change the bankroll, weekly amount, wagers, or entered odds.")
                     GuideItem(icon: "lock.shield.fill", title: "Recommended plan", detail: "Allocates money only when a market passes the historical validation gate. If none qualifies, the recommended amount remains $0 regardless of slider settings.")
                     GuideItem(icon: "eye.trianglebadge.exclamationmark", title: "Unvalidated recommendations", detail: "The Betting screen toggle reveals speculative single bets and all three parlay plans from strong model edges that failed validation. They can receive suggested stakes from the weekly amount, remain orange and explicitly marked Unvalidated, and do not gain historical credibility when enabled.")
@@ -494,14 +494,26 @@ struct BettingView: View {
 
                 Section {
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack { Text("Risk level").fontWeight(.semibold); Spacer(); Text(riskLabel).foregroundStyle(.secondary) }
-                        Slider(value: $bankroll.riskLevel, in: 0...1) { Text("Risk level") } minimumValueLabel: { Text("Low") } maximumValueLabel: { Text("High") }
-                        Text("Higher risk concentrates more of the weekly amount in the strongest measured edges.").font(.caption).foregroundStyle(.secondary)
+                        Text("Risk level").fontWeight(.semibold)
+                        Picker("Risk level", selection: riskPreset) {
+                            Text("Conservative").tag(0.15)
+                            Text("Balanced").tag(BankrollStore.recommendedRisk)
+                            Text("Aggressive").tag(0.85)
+                        }
+                        .pickerStyle(.segmented)
+                        Text(riskLabel == "Conservative" ? "Spreads the weekly amount more evenly across eligible bets." : riskLabel == "Aggressive" ? "Concentrates more of the weekly amount in the strongest measured edges." : "Balances diversification with additional weight on stronger edges.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack { Text("Return target").fontWeight(.semibold); Spacer(); Text(returnLabel).foregroundStyle(.secondary) }
-                        Slider(value: $bankroll.returnLevel, in: 0...1) { Text("Return target") } minimumValueLabel: { Text("Steady") } maximumValueLabel: { Text("Upside") }
-                        Text("Higher return preference gives more weight to higher-upside markets such as moneylines; it does not improve their probability of winning.").font(.caption).foregroundStyle(.secondary)
+                        Text("Return target").fontWeight(.semibold)
+                        Picker("Return target", selection: returnPreset) {
+                            Text("Steady").tag(0.10)
+                            Text("Balanced").tag(BankrollStore.recommendedReturn)
+                            Text("Upside").tag(0.90)
+                        }
+                        .pickerStyle(.segmented)
+                        Text(returnLabel == "Steady" ? "Prioritizes steadier payout profiles." : returnLabel == "High upside" ? "Gives more weight to higher-payout markets such as moneylines; it does not improve their probability of winning." : "Balances steadier selections with higher-return opportunities.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 } header: {
                     HStack {
@@ -765,6 +777,18 @@ struct BettingView: View {
     }
     private var riskLabel: String { bankroll.riskLevel < 0.34 ? "Conservative" : bankroll.riskLevel < 0.67 ? "Balanced" : "Aggressive" }
     private var returnLabel: String { bankroll.returnLevel < 0.34 ? "Steady" : bankroll.returnLevel < 0.67 ? "Balanced" : "High upside" }
+    private var riskPreset: Binding<Double> {
+        Binding(
+            get: { bankroll.riskLevel < 0.34 ? 0.15 : bankroll.riskLevel < 0.67 ? BankrollStore.recommendedRisk : 0.85 },
+            set: { bankroll.riskLevel = $0 }
+        )
+    }
+    private var returnPreset: Binding<Double> {
+        Binding(
+            get: { bankroll.returnLevel < 0.34 ? 0.10 : bankroll.returnLevel < 0.67 ? BankrollStore.recommendedReturn : 0.90 },
+            set: { bankroll.returnLevel = $0 }
+        )
+    }
 }
 
 private struct OddsReturnRow: View {
