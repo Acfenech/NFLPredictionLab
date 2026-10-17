@@ -244,7 +244,7 @@ struct UserGuideView: View {
 
                 Section("Bankroll planner") {
                     GuideItem(icon: "dollarsign.circle.fill", title: "Bankroll", detail: "Enter the amount reserved for betting. It is stored privately on this device and is never transferred or connected to a sportsbook.")
-                    GuideItem(icon: "calendar.badge.clock", title: "Weekly wager amount", detail: "Use the slider for quick changes or type an exact dollar amount. The slider follows the editable bankroll, while user-entered wager fields show how much remains and warn when the plan exceeds the weekly amount or bankroll.")
+                    GuideItem(icon: "calendar.badge.clock", title: "Weekly wager amount", detail: "Enter an exact dollar amount and select Update (or press Return). The betting plan recalculates only after you submit the amount, while user-entered wager fields show how much remains and warn when the plan exceeds the weekly amount or bankroll.")
                     GuideItem(icon: "slider.horizontal.2.square", title: "Risk level", detail: "Choose Conservative, Balanced or Aggressive to control how strongly the weekly amount is concentrated in the largest model edges. It does not change forecast probabilities.")
                     GuideItem(icon: "arrow.up.right.circle.fill", title: "Return target", detail: "Choose Steady, Balanced or Upside to control preference for steadier allocations versus higher-payout markets. Higher upside also means greater variance and does not imply better expected results.")
                     GuideItem(icon: "arrow.counterclockwise.circle.fill", title: "Reset to Recommended", detail: "Restores the balanced planning defaults: 35% risk and 40% return preference. It does not change the bankroll, weekly amount, wagers, or entered odds.")
@@ -376,6 +376,58 @@ private struct ParlayPlan: Identifiable {
     let budgetShare: Double
     var isValidated: Bool { !legs.isEmpty && legs.allSatisfy(\.validated) }
     func isFundable(showingUnvalidated: Bool) -> Bool { isValidated || (showingUnvalidated && !legs.isEmpty) }
+}
+
+private struct WeeklyBudgetEditor: View {
+    let value: Double
+    let onCommit: (Double) -> Void
+    @State private var draft: String
+    @FocusState private var isFocused: Bool
+
+    init(value: Double, onCommit: @escaping (Double) -> Void) {
+        self.value = value
+        self.onCommit = onCommit
+        self._draft = State(initialValue: value.formatted(.number.precision(.fractionLength(2))))
+    }
+
+    private var parsedValue: Double? {
+        let cleaned = draft
+            .replacingOccurrences(of: "$", with: "")
+            .replacingOccurrences(of: ",", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let amount = Double(cleaned), amount >= 0 else { return nil }
+        return amount
+    }
+
+    private var hasUncommittedChange: Bool {
+        guard let parsedValue else { return false }
+        return abs(parsedValue - value) >= 0.005
+    }
+
+    var body: some View {
+        HStack {
+            Text("$")
+            TextField("Weekly amount", text: $draft)
+                .focused($isFocused)
+                .frame(width: 110)
+                .accessibilityLabel("Weekly wager amount")
+                .onSubmit(commit)
+            Button("Update", action: commit)
+                .disabled(!hasUncommittedChange)
+        }
+        .onChange(of: value) { _, newValue in
+            guard !isFocused else { return }
+            draft = newValue.formatted(.number.precision(.fractionLength(2)))
+        }
+    }
+
+    private func commit() {
+        guard let parsedValue else { return }
+        draft = parsedValue.formatted(.number.precision(.fractionLength(2)))
+        isFocused = false
+        guard abs(parsedValue - value) >= 0.005 else { return }
+        onCommit(parsedValue)
+    }
 }
 
 struct BettingView: View {
@@ -575,31 +627,13 @@ struct BettingView: View {
                         Spacer()
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Weekly wager amount").font(.caption).foregroundStyle(.secondary)
-                            HStack {
-                                Text("$")
-                                TextField("Weekly amount", value: $bankroll.weeklyBudget, format: .number.precision(.fractionLength(2)))
-                                    .frame(maxWidth: 140)
-                                    .accessibilityLabel("Weekly wager amount")
+                            WeeklyBudgetEditor(value: bankroll.weeklyBudget) { updatedAmount in
+                                bankroll.weeklyBudget = updatedAmount
                             }
                         }
                     }
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("Weekly wager slider").fontWeight(.semibold)
-                            Spacer()
-                            Text(bankroll.weeklyBudget.formatted(.currency(code: "USD")))
-                                .fontWeight(.semibold).monospacedDigit()
-                        }
-                        Slider(value: weeklyBudgetSlider, in: 0...weeklySliderMaximum, step: weeklySliderStep) {
-                            Text("Weekly wager amount")
-                        } minimumValueLabel: {
-                            Text("$0")
-                        } maximumValueLabel: {
-                            Text(weeklySliderMaximum.formatted(.currency(code: "USD").precision(.fractionLength(0))))
-                        }
-                        Text("Adjusts the total amount distributed across this week’s eligible wagers. You can also type an exact amount above.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
+                    Text("The suggested bets and returns update only after you select Update or press Return.")
+                        .font(.caption).foregroundStyle(.secondary)
                     HStack {
                         LabeledContent("User-entered wagers", value: bankroll.manualTotal.formatted(.currency(code: "USD")))
                         Spacer()
@@ -888,14 +922,6 @@ struct BettingView: View {
                 }
             }.navigationTitle("Bet Slip")
         }
-    }
-    private var weeklySliderMaximum: Double { max(1, bankroll.bankroll) }
-    private var weeklySliderStep: Double { weeklySliderMaximum < 100 ? 1 : 5 }
-    private var weeklyBudgetSlider: Binding<Double> {
-        Binding(
-            get: { min(max(0, bankroll.weeklyBudget), weeklySliderMaximum) },
-            set: { bankroll.weeklyBudget = min(max(0, $0), weeklySliderMaximum) }
-        )
     }
     private var riskLabel: String { bankroll.riskLevel < 0.34 ? "Conservative" : bankroll.riskLevel < 0.67 ? "Balanced" : "Aggressive" }
     private var returnLabel: String { bankroll.returnLevel < 0.34 ? "Steady" : bankroll.returnLevel < 0.67 ? "Balanced" : "High upside" }
