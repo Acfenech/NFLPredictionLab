@@ -388,6 +388,21 @@ private struct ManualPlayerPropLeg: Identifiable, Hashable {
     let odds: Int
 }
 
+private struct PlayerPropCandidate: Identifiable {
+    var id: String { "\(gameKey)|\(quote.id)" }
+    let gameKey: String
+    let matchup: String
+    let quote: PlayerPropQuote
+}
+
+private struct RecommendedPlayerParlay: Identifiable {
+    let id: String
+    let title: String
+    let rationale: String
+    let legs: [PlayerPropCandidate]
+    let budgetShare: Double
+}
+
 private struct SubmittedCurrencyEditor: View {
     let label: String
     let value: Double
@@ -511,6 +526,50 @@ struct BettingView: View {
                 if lhs.bookmakers != rhs.bookmakers { return lhs.bookmakers > rhs.bookmakers }
                 return lhs.player < rhs.player
             }
+    }
+    private var recommendedPlayerParlays: [RecommendedPlayerParlay] {
+        let candidates = predictions.flatMap { prediction in
+            (prediction.playerProps ?? []).compactMap { quote -> PlayerPropCandidate? in
+                guard quote.selection.caseInsensitiveCompare("Over") == .orderedSame,
+                      quote.bookmakers >= 4, (-180...140).contains(quote.odds) else { return nil }
+                return PlayerPropCandidate(
+                    gameKey: prediction.matchup.gameKey,
+                    matchup: "\(prediction.matchup.away.abbreviation) at \(prediction.matchup.home.abbreviation)",
+                    quote: quote
+                )
+            }
+        }.sorted { lhs, rhs in
+            if lhs.quote.bookmakers != rhs.quote.bookmakers { return lhs.quote.bookmakers > rhs.quote.bookmakers }
+            return abs(lhs.quote.odds + 110) < abs(rhs.quote.odds + 110)
+        }
+
+        func diversified(count: Int, offset: Int, preferUpside: Bool = false) -> [PlayerPropCandidate] {
+            let ordered = preferUpside
+                ? candidates.sorted { $0.quote.odds == $1.quote.odds ? $0.quote.bookmakers > $1.quote.bookmakers : $0.quote.odds > $1.quote.odds }
+                : Array(candidates.dropFirst(min(offset, candidates.count))) + Array(candidates.prefix(min(offset, candidates.count)))
+            var selected: [PlayerPropCandidate] = []
+            var players = Set<String>(), games = Set<String>()
+            for candidate in ordered where !players.contains(candidate.quote.player) && !games.contains(candidate.gameKey) {
+                selected.append(candidate)
+                players.insert(candidate.quote.player)
+                games.insert(candidate.gameKey)
+                if selected.count == count { break }
+            }
+            return selected
+        }
+
+        let plans = [
+            RecommendedPlayerParlay(id: "player-lower", title: "Lower Variance · 2 legs",
+                rationale: "Two widely posted overs from different players and games.",
+                legs: diversified(count: 2, offset: 0), budgetShare: 0.04),
+            RecommendedPlayerParlay(id: "player-balanced", title: "Balanced · 3 legs",
+                rationale: "Three consensus overs diversified across separate matchups.",
+                legs: diversified(count: 3, offset: 6), budgetShare: 0.025),
+            RecommendedPlayerParlay(id: "player-upside", title: "High Upside · 4 legs",
+                rationale: "Four higher-return consensus overs with greater parlay variance.",
+                legs: diversified(count: 4, offset: 0, preferUpside: true), budgetShare: 0.015)
+        ]
+        return plans.filter { !$0.legs.isEmpty }
     }
     private func allocations(hasFundableParlay: Bool) -> [RecommendedAllocation] {
         let ranked = predictions.flatMap { prediction in
@@ -908,6 +967,51 @@ struct BettingView: View {
                         Label("No synced player props yet. The scheduled worker fetches them on Sunday, or during a manual workflow run.", systemImage: "clock.arrow.circlepath")
                             .font(.caption).foregroundStyle(.orange)
                     } else {
+                        ForEach(recommendedPlayerParlays) { parlay in
+                            let combinedOdds = OddsMath.parlayAmerican(parlay.legs.map(\.quote.odds)) ?? 100
+                            let suggestedStake = min(bankroll.weeklyBudget, bankroll.bankroll) * parlay.budgetShare
+                            let totalReturn = OddsMath.totalReturn(stake: suggestedStake, american: combinedOdds) ?? 0
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(parlay.title).font(.headline)
+                                        Text(parlay.rationale).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text(combinedOdds.formatted(.number.sign(strategy: .always())))
+                                        .font(.headline.monospacedDigit())
+                                }
+                                ForEach(Array(parlay.legs.enumerated()), id: \.element.id) { index, candidate in
+                                    HStack(alignment: .firstTextBaseline) {
+                                        Text("\(index + 1)").font(.caption.bold()).foregroundStyle(.secondary)
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text("\(candidate.quote.player) · Over \(candidate.quote.point.formatted(.number.precision(.fractionLength(1)))) \(candidate.quote.marketName)")
+                                                .fontWeight(.semibold)
+                                            Text("\(candidate.matchup) · \(candidate.quote.bookmakers) books · \(candidate.quote.odds.formatted(.number.sign(strategy: .always())))")
+                                                .font(.caption).foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+                                HStack {
+                                    Text("Suggested \(suggestedStake.formatted(.currency(code: "USD"))) · wins → \(totalReturn.formatted(.currency(code: "USD"))) returned")
+                                        .font(.caption).monospacedDigit()
+                                    Spacer()
+                                    Button("Use This Parlay") {
+                                        playerPropLegs = parlay.legs.map { candidate in
+                                            ManualPlayerPropLeg(
+                                                player: candidate.quote.player,
+                                                selection: "Over \(candidate.quote.point.formatted(.number.precision(.fractionLength(1)))) \(candidate.quote.marketName)",
+                                                odds: candidate.quote.odds
+                                            )
+                                        }
+                                        bankroll.manualStakes["player-prop-parlay"] = suggestedStake
+                                    }.buttonStyle(.borderedProminent)
+                                }
+                            }
+                            .padding(.vertical, 6)
+                        }
+                        Text("These three parlays are ranked by market availability, price and diversification—not by a validated player-performance model. Confirm every line and combined price in Bet365 before wagering.")
+                            .font(.caption).foregroundStyle(.orange)
                         DisclosureGroup("Available consensus props · \(availablePlayerProps.count)") {
                             ForEach(Array(availablePlayerProps.prefix(30))) { quote in
                                 HStack {
