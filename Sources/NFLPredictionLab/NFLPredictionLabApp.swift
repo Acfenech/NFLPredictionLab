@@ -384,7 +384,7 @@ struct BettingView: View {
     @ObservedObject var bankroll: BankrollStore
     @State private var filter = "All"
     @State private var showAllPasses = false
-    @State private var showUnvalidatedRecommendations = false
+    @State private var showUnvalidatedRecommendations = true
     private func defaultOdds(for recommendation: BetRecommendation, prediction: Prediction) -> Int {
         guard recommendation.kind == .moneyline, let line = prediction.matchup.bettingLine else { return -110 }
         return recommendation.selection.hasPrefix(prediction.matchup.home.abbreviation)
@@ -415,12 +415,18 @@ struct BettingView: View {
             .prefix(5))
     }
     private var allocations: [RecommendedAllocation] {
-        let eligible = predictions.flatMap { prediction in
-            prediction.bettingRecommendations.compactMap { recommendation -> (Prediction, BetRecommendation)? in
-                (validatedKinds.contains(recommendation.kind) || showUnvalidatedRecommendations) && recommendation.strength == .strong
-                    ? (prediction, recommendation) : nil
-            }
+        let ranked = predictions.flatMap { prediction in
+            prediction.bettingRecommendations.map { (prediction, $0) }
+        }.sorted { lhs, rhs in
+            let lhsScore = (lhs.1.expectedValue ?? 0) + lhs.1.edge / 1_000
+            let rhsScore = (rhs.1.expectedValue ?? 0) + rhs.1.edge / 1_000
+            return lhsScore > rhsScore
         }
+        let validated = ranked.filter { validatedKinds.contains($0.1.kind) && $0.1.strength == .strong }
+        let bestAvailable = ranked.filter { $0.1.strength == .strong }
+        let eligible = showUnvalidatedRecommendations
+            ? Array((bestAvailable.isEmpty ? ranked : bestAvailable).prefix(5))
+            : validated
         guard !eligible.isEmpty else { return [] }
         let weights = eligible.map { _, recommendation -> Double in
             let strength = recommendation.strength == .strong ? 2.0 : 1.0
@@ -524,12 +530,12 @@ struct BettingView: View {
 
                 Section("Recommendation set") {
                     Picker("Recommendation set", selection: $showUnvalidatedRecommendations) {
-                        Text("Validated").tag(false)
-                        Text("Speculative").tag(true)
+                        Text("Historically validated").tag(false)
+                        Text("Best available").tag(true)
                     }
                     .pickerStyle(.segmented)
                     if showUnvalidatedRecommendations {
-                        Label("Speculative mode is on for single bets and parlays. These candidates failed historical validation and have a higher demonstrated risk of loss.", systemImage: "exclamationmark.triangle.fill")
+                        Label("Best Available ranks this week’s strongest model opportunities even when their strategy has not passed historical validation. Historical evidence remains visible beside every pick.", systemImage: "scope")
                             .font(.callout).foregroundStyle(.orange)
                     } else {
                         Text("Off · only historically validated single bets and parlays can receive suggested amounts.")
@@ -629,13 +635,13 @@ struct BettingView: View {
                     }
                 }
 
-                Section(showUnvalidatedRecommendations ? "Speculative weekly plan" : "Recommended weekly plan") {
+                Section(showUnvalidatedRecommendations ? "Best available weekly plan" : "Historically validated weekly plan") {
                     if allocations.isEmpty {
-                        Label(showUnvalidatedRecommendations ? "$0 speculative · no strong model edge" : "$0 recommended · no market passes validation",
+                        Label(showUnvalidatedRecommendations ? "$0 · matchup or market data unavailable" : "$0 · no market passes validation",
                               systemImage: showUnvalidatedRecommendations ? "eye.slash.fill" : "lock.shield.fill")
                             .font(.headline).foregroundStyle(.orange)
                         Text(showUnvalidatedRecommendations
-                             ? "The current model has no strong candidate to fund, even with historical validation relaxed."
+                             ? "A weekly best pick cannot be calculated until matchup and market data are available."
                              : "The planner will distribute the funded weekly amount only across recommendations that satisfy the historical sample-size and win-rate gate.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
@@ -649,7 +655,7 @@ struct BettingView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(allocation.recommendation.selection).fontWeight(.semibold)
-                                    Text("\(allocation.matchup) · \(allocation.recommendation.kind.rawValue) · \(allocationValidated ? "Validated" : "Unvalidated")")
+                                    Text("\(allocation.matchup) · \(allocation.recommendation.kind.rawValue) · \(allocationValidated ? "Historically validated" : "Best available · unvalidated")")
                                         .font(.caption).foregroundStyle(allocationValidated ? Color.secondary : Color.orange)
                                     Text("\(allocation.odds.formatted(.number.sign(strategy: .always()))) odds · Model chance: \(allocation.modelWinProbability.formatted(.percent.precision(.fractionLength(0)))) win · \((1 - allocation.modelWinProbability).formatted(.percent.precision(.fractionLength(0)))) loss")
                                         .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
@@ -677,7 +683,7 @@ struct BettingView: View {
                         }
                         let predictedNet = predictedReturned - totalStake
                         VStack(spacing: 5) {
-                            LabeledContent(showUnvalidatedRecommendations ? "Total speculative stake" : "Total recommended stake",
+                            LabeledContent(showUnvalidatedRecommendations ? "Total best-available stake" : "Total validated stake",
                                            value: totalStake.formatted(.currency(code: "USD")))
                             LabeledContent("Anticipated profit if every bet wins",
                                            value: totalProfit.formatted(.currency(code: "USD")))
@@ -805,8 +811,8 @@ struct BettingView: View {
                 Section {
                     if validatedKinds.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            Label("No validated bets this week", systemImage: "shield.lefthalf.filled").font(.title3.bold()).foregroundStyle(.orange)
-                            Text("Every market is currently a Pass. Spreads/totals need 30 strong-edge samples and a 54% win rate; moneylines need 100 samples and at least 3% historical return on stake.").foregroundStyle(.secondary)
+                            Label("No strategy has passed historical validation", systemImage: "shield.lefthalf.filled").font(.title3.bold()).foregroundStyle(.orange)
+                            Text("This does not suppress the Best Available plan. It means the recommendations are model-ranked opinions rather than historically proven betting systems.").foregroundStyle(.secondary)
                         }.padding(.vertical, 8)
                     }
                     Picker("Market", selection: $filter) {

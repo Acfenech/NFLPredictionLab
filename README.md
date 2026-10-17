@@ -6,6 +6,8 @@ A private SwiftUI prototype with a shared Swift forecasting engine. Open `NFLPre
 
 ## MVP 1.3 historical learning
 
+MVP 1.7 makes **Best Available** the default weekly decision mode. It ranks the top five current opportunities by price-aware expected value and model edge, assigns the weekly allocation, and explains each selection even when no strategy has passed historical validation. Historical validation remains prominently visible as an evidence and risk label rather than acting as a hard permission gate. A separate Historically Validated mode remains available.
+
 MVP 1.6 replaces broad edge-only betting rules with conservative strategy profiles. Spread and total candidates now require model-only confirmation, estimated cover probability, positive expected value, and larger strong-edge thresholds. Moneylines require price-aware expected value, a meaningful no-vig probability edge, minimum modeled win probability, and a bounded odds range. The same rules are applied without alteration to current picks and every historical walk-forward grade.
 
 MVP 1.5 expands the historical replay to ten completed seasons. The first season supplies the initial training window and the following nine seasons produce progressively trained, untouched walk-forward grades, increasing the evidence available for less-frequent strong edges without mixing live picks into validation. The local app and scheduled cloud worker share the same window definition.
