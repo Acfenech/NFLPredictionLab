@@ -176,6 +176,30 @@ public struct Matchup: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+public struct PlayerPropQuote: Codable, Identifiable, Hashable, Sendable {
+    public var id: String { "\(player)|\(marketKey)|\(selection)|\(point)" }
+    public let player: String
+    public let marketKey: String
+    public let marketName: String
+    public let selection: String
+    public let point: Double
+    public let odds: Int
+    public let bookmakers: Int
+    public let updatedAt: Date?
+
+    public init(player: String, marketKey: String, marketName: String, selection: String,
+                point: Double, odds: Int, bookmakers: Int, updatedAt: Date? = nil) {
+        self.player = player
+        self.marketKey = marketKey
+        self.marketName = marketName
+        self.selection = selection
+        self.point = point
+        self.odds = odds
+        self.bookmakers = bookmakers
+        self.updatedAt = updatedAt
+    }
+}
+
 public struct Prediction: Codable, Identifiable, Hashable, Sendable {
     public let id: UUID
     public let matchup: Matchup
@@ -196,11 +220,12 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
     public let modelOnlyTotal: Double?
     public let previousMarketHomeSpread: Double?
     public let previousMarketTotal: Double?
+    public let playerProps: [PlayerPropQuote]?
 
     public var predictedWinner: Team { homeWinProbability >= 0.5 ? matchup.home : matchup.away }
     public var confidence: Double { max(homeWinProbability, 1 - homeWinProbability) }
 
-    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now, simulationSummary: SimulationSummary? = nil, modelVersion: String? = "MVP 1.2", dataSourceUpdatedAt: Date? = .now, recalculatedAt: Date? = .now, factors: [ProjectionFactor]? = nil, previousHomeWinProbability: Double? = nil, previousHomeScore: Double? = nil, previousAwayScore: Double? = nil, modelOnlyHomeSpread: Double? = nil, modelOnlyTotal: Double? = nil, previousMarketHomeSpread: Double? = nil, previousMarketTotal: Double? = nil) {
+    public init(id: UUID = UUID(), matchup: Matchup, homeScore: Double, awayScore: Double, homeWinProbability: Double, simulations: Int, generatedAt: Date = .now, simulationSummary: SimulationSummary? = nil, modelVersion: String? = "MVP 1.2", dataSourceUpdatedAt: Date? = .now, recalculatedAt: Date? = .now, factors: [ProjectionFactor]? = nil, previousHomeWinProbability: Double? = nil, previousHomeScore: Double? = nil, previousAwayScore: Double? = nil, modelOnlyHomeSpread: Double? = nil, modelOnlyTotal: Double? = nil, previousMarketHomeSpread: Double? = nil, previousMarketTotal: Double? = nil, playerProps: [PlayerPropQuote]? = nil) {
         self.id = id
         self.matchup = matchup
         self.homeScore = homeScore
@@ -220,6 +245,7 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
         self.modelOnlyTotal = modelOnlyTotal
         self.previousMarketHomeSpread = previousMarketHomeSpread
         self.previousMarketTotal = previousMarketTotal
+        self.playerProps = playerProps
     }
 
     public var projectedHomeSpread: Double { homeScore - awayScore }

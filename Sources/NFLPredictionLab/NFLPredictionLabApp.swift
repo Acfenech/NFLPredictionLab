@@ -253,7 +253,7 @@ struct UserGuideView: View {
                     GuideItem(icon: "lock.shield.fill", title: "Validated recommendations", detail: "Allocates money only when a market passes its historical sample and performance gate. If none qualifies, the validated recommendation remains $0 regardless of strategy settings.")
                     GuideItem(icon: "eye.trianglebadge.exclamationmark", title: "Model-ranked recommendations", detail: "The Bet Slip segmented control reveals this week’s strongest model edges even when they failed historical validation. They can receive suggested stakes, remain orange and explicitly marked Unvalidated, and do not gain credibility merely because this mode is enabled.")
                     GuideItem(icon: "square.stack.3d.up.fill", title: "Three parlay plans", detail: "Lower Variance uses two side/total legs, Balanced uses three diversified edges, and High Upside uses four legs with extra moneyline preference. Games are not repeated inside one parlay. Suggested stakes require validation unless you explicitly enable speculative recommendations.")
-                    GuideItem(icon: "person.crop.circle.badge.plus", title: "Player parlay builder", detail: "Enter player-prop selections and the exact American odds from your sportsbook to calculate combined odds and returns. The current free nflverse feed does not provide live player-prop markets, so these entries are payout calculations rather than model-validated recommendations.")
+                    GuideItem(icon: "person.crop.circle.badge.plus", title: "Player parlay builder", detail: "Sunday cloud refreshes import consensus passing, rushing, receiving and reception props from The Odds API. Add consensus legs or enter a prop manually, then replace the price with the exact Bet365 odds. These are market and payout comparisons until player projections and historical prop validation are complete.")
                     GuideItem(icon: "equal.square.fill", title: "Odds and returns", detail: "Every wager settles in one of two ways: a win returns the full stake plus profit, while a loss returns $0. The weekly outlook rounds the combined win probabilities to a projected win count, assigns those wins to the highest-probability selections, and totals their full returns. It is a scenario forecast, not a guarantee. Enter the exact American odds shown by your sportsbook because every displayed return changes with the price.")
                 }
 
@@ -504,6 +504,13 @@ struct BettingView: View {
             .filter { $0.bettingRecommendations.contains { $0.strength != .pass } }
             .sorted { ($0.bettingRecommendations.map(\.edge).max() ?? 0) > ($1.bettingRecommendations.map(\.edge).max() ?? 0) }
             .prefix(5))
+    }
+    private var availablePlayerProps: [PlayerPropQuote] {
+        predictions.flatMap { $0.playerProps ?? [] }
+            .sorted { lhs, rhs in
+                if lhs.bookmakers != rhs.bookmakers { return lhs.bookmakers > rhs.bookmakers }
+                return lhs.player < rhs.player
+            }
     }
     private func allocations(hasFundableParlay: Bool) -> [RecommendedAllocation] {
         let ranked = predictions.flatMap { prediction in
@@ -895,8 +902,33 @@ struct BettingView: View {
                 }
 
                 Section("Player parlay builder") {
-                    Label("Enter the exact player props and American odds shown by your sportsbook. Live player-prop lines are not included in the current nflverse feed.", systemImage: "person.crop.circle.badge.plus")
+                    Label("Consensus player props come from The Odds API. Replace the displayed consensus price with the exact Bet365 line before placing a wager.", systemImage: "person.crop.circle.badge.plus")
                         .font(.caption).foregroundStyle(.secondary)
+                    if availablePlayerProps.isEmpty {
+                        Label("No synced player props yet. The scheduled worker fetches them on Sunday, or during a manual workflow run.", systemImage: "clock.arrow.circlepath")
+                            .font(.caption).foregroundStyle(.orange)
+                    } else {
+                        DisclosureGroup("Available consensus props · \(availablePlayerProps.count)") {
+                            ForEach(Array(availablePlayerProps.prefix(30))) { quote in
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(quote.player).fontWeight(.semibold)
+                                        Text("\(quote.selection) \(quote.point.formatted(.number.precision(.fractionLength(1)))) \(quote.marketName) · \(quote.bookmakers) books")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text(quote.odds.formatted(.number.sign(strategy: .always()))).monospacedDigit()
+                                    Button("Add") {
+                                        let selection = "\(quote.selection) \(quote.point.formatted(.number.precision(.fractionLength(1)))) \(quote.marketName)"
+                                        let leg = ManualPlayerPropLeg(player: quote.player, selection: selection, odds: quote.odds)
+                                        if !playerPropLegs.contains(where: { $0.player == leg.player && $0.selection == leg.selection }) {
+                                            playerPropLegs.append(leg)
+                                        }
+                                    }.buttonStyle(.borderless)
+                                }
+                            }
+                        }
+                    }
                     HStack {
                         TextField("Player", text: $playerName).frame(minWidth: 120)
                         TextField("Selection, e.g. Over 74.5 receiving yards", text: $playerPropSelection).frame(minWidth: 260)

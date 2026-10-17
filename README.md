@@ -2,6 +2,8 @@
 
 The betting screen calculates implied probability, potential profit, and total return from editable American odds for every single and parlay. nflverse remains the no-key spread/total and baseline moneyline source. When the optional `THE_ODDS_API_KEY` environment variable is present, the scheduled worker overlays the median available US-book NFL moneyline and preserves it through CloudKit sync. The key belongs in the GitHub Actions secret named `THE_ODDS_API_KEY`; it must not be committed to the repository. Exact sportsbook odds should still be entered before placing a wager.
 
+Sunday scheduled runs and manual workflow runs also request four core NFL player-prop markets (`player_pass_yds`, `player_rush_yds`, `player_reception_yds`, and `player_receptions`) one event at a time. Consensus prices are stored with the forecast bundle and shown in the Player Parlay Builder. Limiting this to Sunday plus manual runs keeps normal scheduled refreshes from exhausting the free API quota. Player props are not yet model-validated recommendations, and exact Bet365 prices must be entered before use.
+
 A private SwiftUI prototype with a shared Swift forecasting engine. Open `NFLPredictionLab.xcodeproj` in Xcode and run the `NFLPredictionLab` scheme on **My Mac** or a connected iPhone.
 
 ## MVP 1.3 historical learning

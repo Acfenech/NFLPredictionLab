@@ -212,7 +212,7 @@ public struct TheOddsAPIMoneylineFeed: Sendable {
         guard !values.isEmpty else { return nil }; let sorted = values.sorted(); let middle = sorted.count / 2
         return sorted.count.isMultiple(of: 2) ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
     }
-    private static let teamNames = [
+    static let teamNames = [
         "ARI":"Arizona Cardinals", "ATL":"Atlanta Falcons", "BAL":"Baltimore Ravens", "BUF":"Buffalo Bills",
         "CAR":"Carolina Panthers", "CHI":"Chicago Bears", "CIN":"Cincinnati Bengals", "CLE":"Cleveland Browns",
         "DAL":"Dallas Cowboys", "DEN":"Denver Broncos", "DET":"Detroit Lions", "GB":"Green Bay Packers",
@@ -221,6 +221,93 @@ public struct TheOddsAPIMoneylineFeed: Sendable {
         "MIN":"Minnesota Vikings", "NE":"New England Patriots", "NO":"New Orleans Saints", "NYG":"New York Giants",
         "NYJ":"New York Jets", "PHI":"Philadelphia Eagles", "PIT":"Pittsburgh Steelers", "SEA":"Seattle Seahawks",
         "SF":"San Francisco 49ers", "TB":"Tampa Bay Buccaneers", "TEN":"Tennessee Titans", "WAS":"Washington Commanders"
+    ]
+}
+
+/// Current consensus player-prop prices. This intentionally requests four core
+/// volume markets once per event so a weekly refresh remains practical on the
+/// free 500-credit plan.
+public struct TheOddsAPIPlayerPropsFeed: Sendable {
+    public static let marketKeys = ["player_pass_yds", "player_rush_yds", "player_reception_yds", "player_receptions"]
+    public let apiKey: String
+    public init(apiKey: String) { self.apiKey = apiKey }
+
+    public func quotes(for matchups: [Matchup]) async throws -> [String: [PlayerPropQuote]] {
+        var eventComponents = URLComponents(string: "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/events")!
+        eventComponents.queryItems = [URLQueryItem(name: "apiKey", value: apiKey)]
+        let (eventData, eventResponse) = try await URLSession.shared.data(for: .nflStatsRequest(url: eventComponents.url!))
+        if let http = eventResponse as? HTTPURLResponse, http.statusCode != 200 {
+            throw StatsFeedError.httpStatus(http.statusCode, String(decoding: eventData.prefix(300), as: UTF8.self))
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let events = try decoder.decode([Event].self, from: eventData)
+        var result: [String: [PlayerPropQuote]] = [:]
+        for matchup in matchups {
+            let homeName = TheOddsAPIMoneylineFeed.teamNames[matchup.home.abbreviation] ?? matchup.home.name
+            let awayName = TheOddsAPIMoneylineFeed.teamNames[matchup.away.abbreviation] ?? matchup.away.name
+            guard let event = events.first(where: { $0.homeTeam == homeName && $0.awayTeam == awayName }) else { continue }
+            var components = URLComponents(string: "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/events/\(event.id)/odds")!
+            components.queryItems = [
+                URLQueryItem(name: "apiKey", value: apiKey), URLQueryItem(name: "regions", value: "us"),
+                URLQueryItem(name: "markets", value: Self.marketKeys.joined(separator: ",")),
+                URLQueryItem(name: "oddsFormat", value: "american")
+            ]
+            let (data, response) = try await URLSession.shared.data(for: .nflStatsRequest(url: components.url!))
+            if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+                throw StatsFeedError.httpStatus(http.statusCode, String(decoding: data.prefix(300), as: UTF8.self))
+            }
+            let detail = try decoder.decode(EventDetail.self, from: data)
+            result[matchup.gameKey] = Self.consensusQuotes(from: detail)
+        }
+        return result
+    }
+
+    private static func consensusQuotes(from event: EventDetail) -> [PlayerPropQuote] {
+        struct Key: Hashable { let player, market, selection: String; let point: Double }
+        var prices: [Key: [Double]] = [:]
+        var updates: [Key: Date] = [:]
+        for book in event.bookmakers {
+            for market in book.markets where marketKeys.contains(market.key) {
+                for outcome in market.outcomes {
+                    guard let player = outcome.description, let point = outcome.point,
+                          let decimal = OddsMath.decimal(fromAmerican: outcome.price) else { continue }
+                    let key = Key(player: player, market: market.key, selection: outcome.name, point: point)
+                    prices[key, default: []].append(decimal)
+                    if let update = market.lastUpdate, update > (updates[key] ?? .distantPast) { updates[key] = update }
+                }
+            }
+        }
+        return prices.compactMap { key, values in
+            guard let median = median(values), let odds = OddsMath.american(fromDecimal: median) else { return nil }
+            return PlayerPropQuote(player: key.player, marketKey: key.market,
+                marketName: marketNames[key.market] ?? key.market, selection: key.selection,
+                point: key.point, odds: odds, bookmakers: values.count, updatedAt: updates[key])
+        }.sorted { lhs, rhs in
+            lhs.player == rhs.player ? lhs.marketName < rhs.marketName : lhs.player < rhs.player
+        }
+    }
+
+    private static func median(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted(), middle = sorted.count / 2
+        return sorted.count.isMultiple(of: 2) ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
+    }
+
+    private struct Event: Decodable {
+        let id: String; let homeTeam: String; let awayTeam: String
+        enum CodingKeys: String, CodingKey { case id, homeTeam = "home_team", awayTeam = "away_team" }
+    }
+    private struct EventDetail: Decodable { let bookmakers: [Bookmaker] }
+    private struct Bookmaker: Decodable { let markets: [Market] }
+    private struct Market: Decodable {
+        let key: String; let lastUpdate: Date?; let outcomes: [Outcome]
+        enum CodingKeys: String, CodingKey { case key, lastUpdate = "last_update", outcomes }
+    }
+    private struct Outcome: Decodable { let name: String; let description: String?; let price: Int; let point: Double? }
+    private static let marketNames = [
+        "player_pass_yds": "Passing yards", "player_rush_yds": "Rushing yards",
+        "player_reception_yds": "Receiving yards", "player_receptions": "Receptions"
     ]
 }
 

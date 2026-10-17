@@ -294,7 +294,8 @@ final class AppModel: ObservableObject {
                                   modelOnlyHomeSpread: fresh.modelOnlyHomeSpread,
                                   modelOnlyTotal: fresh.modelOnlyTotal,
                                   previousMarketHomeSpread: prior?.matchup.bettingLine?.homeSpread,
-                                  previousMarketTotal: prior?.matchup.bettingLine?.total)
+                                  previousMarketTotal: prior?.matchup.bettingLine?.total,
+                                  playerProps: prior?.playerProps)
             }
         }.value
     }

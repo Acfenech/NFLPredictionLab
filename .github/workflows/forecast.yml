@@ -39,6 +39,11 @@ jobs:
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "$(TZ=America/Detroit date +%u)" == "7" ]]; then
+            echo "fetch_props=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "fetch_props=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Check out repository
         if: steps.schedule_guard.outputs.run == 'true'
@@ -64,6 +69,7 @@ jobs:
           ADVANCED_METRICS_FEED_URL: ${{ vars.ADVANCED_METRICS_FEED_URL }}
           GAME_CONTEXT_FEED_URL: ${{ vars.GAME_CONTEXT_FEED_URL }}
           THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
+          FETCH_PLAYER_PROPS: ${{ steps.schedule_guard.outputs.fetch_props }}
         run: swift run CloudForecastWorker
 
       - name: Archive forecast artifact

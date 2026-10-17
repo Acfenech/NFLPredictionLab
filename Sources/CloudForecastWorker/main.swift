@@ -199,6 +199,18 @@ if let apiKey = environment["THE_ODDS_API_KEY"], !apiKey.isEmpty {
         print("The Odds API unavailable (\(error)); continuing with nflverse consensus")
     }
 }
+var playerPropsByGame: [String: [PlayerPropQuote]] = [:]
+if environment["FETCH_PLAYER_PROPS"] == "true",
+   let apiKey = environment["THE_ODDS_API_KEY"], !apiKey.isEmpty {
+    do {
+        playerPropsByGame = try await TheOddsAPIPlayerPropsFeed(apiKey: apiKey).quotes(for: matchups)
+        let quoteCount = playerPropsByGame.values.reduce(0) { $0 + $1.count }
+        source += " + The Odds API player props"
+        print("Loaded \(quoteCount) player-prop consensus quotes for \(playerPropsByGame.count) games")
+    } catch {
+        print("Player props unavailable (\(error)); continuing without player-prop markets")
+    }
+}
 let historical = (try? await NFLVerseScheduleFeed().historicalGames(
     seasons: HistoricalValidationWindow.seasons(before: season)
 )) ?? []
@@ -264,7 +276,18 @@ let forecastPredictions = matchups.enumerated().map { offset, matchup in
     let ratedMatchup = Matchup(id: matchup.id, week: matchup.week, kickoff: matchup.kickoff,
                                away: rated(matchup.away), home: rated(matchup.home), bettingLine: matchup.bettingLine,
                                context: context)
-    return engine.predict(ratedMatchup, seed: UInt64(offset + 1))
+    let fresh = engine.predict(ratedMatchup, seed: UInt64(offset + 1))
+    return Prediction(id: fresh.id, matchup: fresh.matchup, homeScore: fresh.homeScore,
+        awayScore: fresh.awayScore, homeWinProbability: fresh.homeWinProbability,
+        simulations: fresh.simulations, generatedAt: fresh.generatedAt,
+        simulationSummary: fresh.simulationSummary, modelVersion: fresh.modelVersion,
+        dataSourceUpdatedAt: fresh.dataSourceUpdatedAt, recalculatedAt: fresh.recalculatedAt,
+        factors: fresh.factors, previousHomeWinProbability: fresh.previousHomeWinProbability,
+        previousHomeScore: fresh.previousHomeScore, previousAwayScore: fresh.previousAwayScore,
+        modelOnlyHomeSpread: fresh.modelOnlyHomeSpread, modelOnlyTotal: fresh.modelOnlyTotal,
+        previousMarketHomeSpread: fresh.previousMarketHomeSpread,
+        previousMarketTotal: fresh.previousMarketTotal,
+        playerProps: playerPropsByGame[matchup.gameKey])
 }
 
 let generatedAt = Date()
