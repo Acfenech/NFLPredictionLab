@@ -186,7 +186,7 @@ struct UserGuideView: View {
                     GuideItem(icon: "lock.shield.fill", title: "Recommended plan", detail: "Allocates money only when a market passes the historical validation gate. If none qualifies, the recommended amount remains $0 regardless of slider settings.")
                     GuideItem(icon: "eye.trianglebadge.exclamationmark", title: "Unvalidated recommendations", detail: "The Betting screen toggle reveals speculative single bets and all three parlay plans from strong model edges that failed validation. They can receive suggested stakes from the weekly amount, remain orange and explicitly marked Unvalidated, and do not gain historical credibility when enabled.")
                     GuideItem(icon: "square.stack.3d.up.fill", title: "Three parlay plans", detail: "Lower Variance uses two side/total legs, Balanced uses three diversified edges, and High Upside uses four legs with extra moneyline preference. Games are not repeated inside one parlay. Suggested stakes require validation unless you explicitly enable speculative recommendations.")
-                    GuideItem(icon: "equal.square.fill", title: "Odds and returns", detail: "Every wager settles in one of two ways: a win returns the full stake plus profit, while a loss returns $0. The long-run model average is an analytical comparison across many similar wagers, never a partial payout. Enter the exact American odds shown by your sportsbook before placing a wager because every displayed return changes with the price.")
+                    GuideItem(icon: "equal.square.fill", title: "Odds and returns", detail: "Every wager settles in one of two ways: a win returns the full stake plus profit, while a loss returns $0. The weekly outlook rounds the combined win probabilities to a projected win count, assigns those wins to the highest-probability selections, and totals their full returns. It is a scenario forecast, not a guarantee. Enter the exact American odds shown by your sportsbook because every displayed return changes with the price.")
                 }
 
                 Section("Accuracy terms") {
@@ -529,11 +529,13 @@ struct BettingView: View {
                              : "The planner will distribute the funded weekly amount only across recommendations that satisfy the historical sample-size and win-rate gate.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
+                        let predictedWinCount = min(allocations.count, max(0, Int(allocations.map(\.modelWinProbability).reduce(0, +).rounded())))
+                        let predictedWinnerIDs = Set(allocations.sorted { $0.modelWinProbability > $1.modelWinProbability }.prefix(predictedWinCount).map(\.id))
                         ForEach(allocations, id: \.id) { allocation in
                             let allocationValidated = validatedKinds.contains(allocation.recommendation.kind)
                             let profit = OddsMath.profit(stake: allocation.amount, american: allocation.odds) ?? 0
                             let totalReturn = OddsMath.totalReturn(stake: allocation.amount, american: allocation.odds) ?? 0
-                            let expectedNet = allocation.modelWinProbability * profit - (1 - allocation.modelWinProbability) * allocation.amount
+                            let predictedToWin = predictedWinnerIDs.contains(allocation.id)
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(allocation.recommendation.selection).fontWeight(.semibold)
@@ -543,8 +545,9 @@ struct BettingView: View {
                                         .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
                                     Text("WIN → \(totalReturn.formatted(.currency(code: "USD"))) returned (+\(profit.formatted(.currency(code: "USD")))) · LOSS → $0 returned (-\(allocation.amount.formatted(.currency(code: "USD"))))")
                                         .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
-                                    Text("Long-run model average net: \(expectedNet.formatted(.currency(code: "USD").sign(strategy: .always()))) · not a payout")
-                                        .font(.caption2).foregroundStyle(expectedNet >= 0 ? Color.green : Color.orange).monospacedDigit()
+                                    Label(predictedToWin ? "Predicted WIN this week · \(totalReturn.formatted(.currency(code: "USD"))) returned" : "Predicted LOSS this week · $0 returned",
+                                          systemImage: predictedToWin ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                        .font(.caption2.bold()).foregroundStyle(predictedToWin ? Color.green : Color.red).monospacedDigit()
                                 }
                                 Spacer()
                                 VStack(alignment: .trailing, spacing: 2) {
@@ -558,10 +561,11 @@ struct BettingView: View {
                             partial + (OddsMath.profit(stake: allocation.amount, american: allocation.odds) ?? 0)
                         }
                         let totalReturned = totalStake + totalProfit
-                        let expectedNet = allocations.reduce(0) { partial, allocation in
-                            let profit = OddsMath.profit(stake: allocation.amount, american: allocation.odds) ?? 0
-                            return partial + allocation.modelWinProbability * profit - (1 - allocation.modelWinProbability) * allocation.amount
+                        let predictedReturned = allocations.reduce(0) { partial, allocation in
+                            guard predictedWinnerIDs.contains(allocation.id) else { return partial }
+                            return partial + (OddsMath.totalReturn(stake: allocation.amount, american: allocation.odds) ?? 0)
                         }
+                        let predictedNet = predictedReturned - totalStake
                         VStack(spacing: 5) {
                             LabeledContent(showUnvalidatedRecommendations ? "Total speculative stake" : "Total recommended stake",
                                            value: totalStake.formatted(.currency(code: "USD")))
@@ -569,8 +573,12 @@ struct BettingView: View {
                                            value: totalProfit.formatted(.currency(code: "USD")))
                             LabeledContent("Total returned if every bet wins",
                                            value: totalReturned.formatted(.currency(code: "USD")))
-                            LabeledContent("Long-run model average net · not a payout",
-                                           value: expectedNet.formatted(.currency(code: "USD").sign(strategy: .always())))
+                            LabeledContent("Predicted weekly record",
+                                           value: "\(predictedWinCount) wins · \(allocations.count - predictedWinCount) losses")
+                            LabeledContent("Predicted total returned",
+                                           value: predictedReturned.formatted(.currency(code: "USD")))
+                            LabeledContent("Predicted weekly net",
+                                           value: predictedNet.formatted(.currency(code: "USD").sign(strategy: .always())))
                         }
                         .fontWeight(.semibold)
                         .monospacedDigit()
@@ -578,6 +586,11 @@ struct BettingView: View {
                 }
 
                 Section(showUnvalidatedRecommendations ? "Three speculative parlay plans" : "Three parlay plans") {
+                    let fundableParlayProbabilities = parlayPlans.filter { $0.isFundable(showingUnvalidated: showUnvalidatedRecommendations) }
+                    let predictedParlayWinCount = min(fundableParlayProbabilities.count, max(0, Int(fundableParlayProbabilities.map { $0.legs.map(\.modelWinProbability).reduce(1, *) }.reduce(0, +).rounded())))
+                    let predictedParlayWinnerIDs = Set(fundableParlayProbabilities.sorted {
+                        $0.legs.map(\.modelWinProbability).reduce(1, *) > $1.legs.map(\.modelWinProbability).reduce(1, *)
+                    }.prefix(predictedParlayWinCount).map(\.id))
                     ForEach(parlayPlans) { parlay in
                         let fundedWeeklyAmount = min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll))
                         let riskMultiplier = parlay.id == "lower" ? 1.25 - bankroll.riskLevel * 0.5 : parlay.id == "upside" ? 0.5 + bankroll.riskLevel : 1.0
@@ -589,7 +602,7 @@ struct BettingView: View {
                         let suggestedProfit = OddsMath.profit(stake: suggestedStake, american: activeOdds) ?? 0
                         let suggestedReturn = OddsMath.totalReturn(stake: suggestedStake, american: activeOdds) ?? 0
                         let parlayWinProbability = parlay.legs.isEmpty ? 0 : parlay.legs.map(\.modelWinProbability).reduce(1, *)
-                        let expectedNet = parlayWinProbability * suggestedProfit - (1 - parlayWinProbability) * suggestedStake
+                        let predictedToWin = predictedParlayWinnerIDs.contains(parlay.id)
                         let enteredStake = bankroll.manualStakes[parlayKey] ?? 0
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
@@ -627,8 +640,9 @@ struct BettingView: View {
                                  : "WIN → \(suggestedReturn.formatted(.currency(code: "USD"))) returned (+\(suggestedProfit.formatted(.currency(code: "USD")))) · LOSS → $0 returned (-\(suggestedStake.formatted(.currency(code: "USD"))))")
                                 .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                             if !parlay.legs.isEmpty {
-                                Text("Long-run model average net: \(expectedNet.formatted(.currency(code: "USD").sign(strategy: .always()))) · not a payout")
-                                    .font(.caption).foregroundStyle(expectedNet >= 0 ? Color.green : Color.orange).monospacedDigit()
+                                Label(predictedToWin ? "Predicted WIN this week · \(suggestedReturn.formatted(.currency(code: "USD"))) returned" : "Predicted LOSS this week · $0 returned",
+                                      systemImage: predictedToWin ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                    .font(.caption.bold()).foregroundStyle(predictedToWin ? Color.green : Color.red).monospacedDigit()
                             }
                             HStack {
                                 Text("My parlay wager").font(.caption).foregroundStyle(.secondary)
@@ -653,20 +667,22 @@ struct BettingView: View {
                         let activeOdds = bankroll.odds(for: "parlay-\(parlay.id)", default: calculatedOdds)
                         return partial + (OddsMath.profit(stake: stake, american: activeOdds) ?? 0)
                     }
-                    let totalParlayExpectedNet = fundedParlays.reduce(0) { partial, parlay in
+                    let predictedParlayReturned = fundedParlays.reduce(0) { partial, parlay in
+                        guard predictedParlayWinnerIDs.contains(parlay.id) else { return partial }
                         let riskMultiplier = parlay.id == "lower" ? 1.25 - bankroll.riskLevel * 0.5 : parlay.id == "upside" ? 0.5 + bankroll.riskLevel : 1.0
                         let stake = fundedWeeklyAmount * parlay.budgetShare * riskMultiplier
                         let calculatedOdds = OddsMath.parlayAmerican(parlay.legs.map(\.odds)) ?? 100
                         let activeOdds = bankroll.odds(for: "parlay-\(parlay.id)", default: calculatedOdds)
-                        let profit = OddsMath.profit(stake: stake, american: activeOdds) ?? 0
-                        let winProbability = parlay.legs.map(\.modelWinProbability).reduce(1, *)
-                        return partial + winProbability * profit - (1 - winProbability) * stake
+                        return partial + (OddsMath.totalReturn(stake: stake, american: activeOdds) ?? 0)
                     }
+                    let predictedParlayNet = predictedParlayReturned - totalParlayStake
                     VStack(spacing: 5) {
                         LabeledContent("Total suggested parlay stake", value: totalParlayStake.formatted(.currency(code: "USD")))
                         LabeledContent("Anticipated profit if every parlay wins", value: totalParlayProfit.formatted(.currency(code: "USD")))
                         LabeledContent("Total returned if every parlay wins", value: (totalParlayStake + totalParlayProfit).formatted(.currency(code: "USD")))
-                        LabeledContent("Long-run model average net · not a payout", value: totalParlayExpectedNet.formatted(.currency(code: "USD").sign(strategy: .always())))
+                        LabeledContent("Predicted weekly parlay record", value: "\(predictedParlayWinCount) wins · \(fundedParlays.count - predictedParlayWinCount) losses")
+                        LabeledContent("Predicted parlay return", value: predictedParlayReturned.formatted(.currency(code: "USD")))
+                        LabeledContent("Predicted parlay net", value: predictedParlayNet.formatted(.currency(code: "USD").sign(strategy: .always())))
                     }
                     .fontWeight(.semibold)
                     .monospacedDigit()
