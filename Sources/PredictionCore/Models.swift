@@ -286,19 +286,33 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
         var recommendations: [BetRecommendation] = []
         if let marketMargin = line.homeSpread {
             let edge = projectedHomeSpread - marketMargin
+            let modelOnlyEdge = (modelOnlyHomeSpread ?? projectedHomeSpread) - marketMargin
             let team = edge >= 0 ? matchup.home.abbreviation : matchup.away.abbreviation
             let conventionalLine = edge >= 0 ? -marketMargin : marketMargin
             let label = "\(team) \(conventionalLine.formatted(.number.sign(strategy: .always()).precision(.fractionLength(1))))"
+            let probability = Self.coverProbability(edgePoints: abs(edge), deviation: 13.5)
+            let expectedValue = probability * (100.0 / 110.0 + 1) - 1
+            let agrees = edge * modelOnlyEdge > 0
+            let strength: BetStrength = agrees && abs(modelOnlyEdge) >= 7.5 && abs(edge) >= 7.5 && expectedValue >= 0.05
+                ? .strong : agrees && abs(modelOnlyEdge) >= 5.5 && abs(edge) >= 5.5 && expectedValue > 0 ? .lean : .pass
             recommendations.append(BetRecommendation(kind: .spread, selection: label,
-                edge: abs(edge), strength: BetStrength(edge: abs(edge), lean: 2.5, strong: 4.5),
-                rationale: "Projected margin differs from consensus by \(abs(edge).formatted(.number.precision(.fractionLength(1)))) points."))
+                edge: abs(edge), strength: strength,
+                rationale: "Projected margin differs by \(abs(edge).formatted(.number.precision(.fractionLength(1)))) points; estimated cover chance \(probability.formatted(.percent.precision(.fractionLength(1)))) and value \(expectedValue.formatted(.percent.precision(.fractionLength(1)))).",
+                strategyID: "spread-confirmed-value", estimatedWinProbability: probability, expectedValue: expectedValue))
         }
         if let marketTotal = line.total {
             let edge = projectedTotal - marketTotal
+            let modelOnlyEdge = (modelOnlyTotal ?? projectedTotal) - marketTotal
             let selection = edge >= 0 ? "Over \(marketTotal.formatted(.number.precision(.fractionLength(1))))" : "Under \(marketTotal.formatted(.number.precision(.fractionLength(1))))"
+            let probability = Self.coverProbability(edgePoints: abs(edge), deviation: 14.5)
+            let expectedValue = probability * (100.0 / 110.0 + 1) - 1
+            let agrees = edge * modelOnlyEdge > 0
+            let strength: BetStrength = agrees && abs(modelOnlyEdge) >= 10 && abs(edge) >= 10 && expectedValue >= 0.05
+                ? .strong : agrees && abs(modelOnlyEdge) >= 5.5 && abs(edge) >= 5.5 && expectedValue > 0 ? .lean : .pass
             recommendations.append(BetRecommendation(kind: .total, selection: selection,
-                edge: abs(edge), strength: BetStrength(edge: abs(edge), lean: 3.5, strong: 6.0),
-                rationale: "Projected total is \(abs(edge).formatted(.number.precision(.fractionLength(1)))) points \(edge >= 0 ? "above" : "below") consensus."))
+                edge: abs(edge), strength: strength,
+                rationale: "Projected total is \(abs(edge).formatted(.number.precision(.fractionLength(1)))) points \(edge >= 0 ? "above" : "below") consensus; estimated hit chance \(probability.formatted(.percent.precision(.fractionLength(1)))) and value \(expectedValue.formatted(.percent.precision(.fractionLength(1)))).",
+                strategyID: "total-confirmed-value", estimatedWinProbability: probability, expectedValue: expectedValue))
         }
         if let homeOdds = line.homeMoneyline, let awayOdds = line.awayMoneyline {
             let homeRaw = Self.impliedProbability(homeOdds), awayRaw = Self.impliedProbability(awayOdds)
@@ -308,10 +322,17 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
             let chooseHome = homeEdge >= 0
             let edge = abs(homeEdge)
             let odds = chooseHome ? homeOdds : awayOdds
+            let probability = chooseHome ? homeWinProbability : 1 - homeWinProbability
+            let decimalOdds = odds < 0 ? 1 + 100 / Double(-odds) : 1 + Double(odds) / 100
+            let expectedValue = probability * decimalOdds - 1
+            let acceptablePrice = (-300...300).contains(odds)
+            let strength: BetStrength = acceptablePrice && edge >= 0.10 && expectedValue >= 0.08 && probability >= 0.55
+                ? .strong : acceptablePrice && edge >= 0.06 && expectedValue >= 0.03 ? .lean : .pass
             recommendations.append(BetRecommendation(kind: .moneyline,
                 selection: "\(chooseHome ? matchup.home.abbreviation : matchup.away.abbreviation) moneyline \(odds.formatted(.number.sign(strategy: .always())))",
-                edge: edge * 100, strength: BetStrength(edge: edge, lean: 0.045, strong: 0.075),
-                rationale: "No-vig win probability edge is \(edge.formatted(.percent.precision(.fractionLength(1))))."))
+                edge: edge * 100, strength: strength,
+                rationale: "No-vig edge \(edge.formatted(.percent.precision(.fractionLength(1)))); expected value \(expectedValue.formatted(.percent.precision(.fractionLength(1)))) at \(odds.formatted(.number.sign(strategy: .always()))).",
+                strategyID: "moneyline-price-aware-value", estimatedWinProbability: probability, expectedValue: expectedValue))
         }
         return recommendations.sorted { lhs, rhs in
             if lhs.strength != rhs.strength { return lhs.strength.sortOrder > rhs.strength.sortOrder }
@@ -321,6 +342,13 @@ public struct Prediction: Codable, Identifiable, Hashable, Sendable {
 
     private static func impliedProbability(_ americanOdds: Int) -> Double {
         americanOdds < 0 ? Double(-americanOdds) / Double(-americanOdds + 100) : 100 / Double(americanOdds + 100)
+    }
+
+    private static func coverProbability(edgePoints: Double, deviation: Double) -> Double {
+        let normalCDF = 0.5 * (1 + erf(edgePoints / (deviation * sqrt(2))))
+        // Shrink theoretical probabilities toward 50% because forecast residuals
+        // are noisier than a single normal distribution implies.
+        return 0.5 + (normalCDF - 0.5) * 0.75
     }
 }
 
@@ -348,9 +376,14 @@ public struct BetRecommendation: Identifiable, Codable, Hashable, Sendable {
     public let edge: Double
     public let strength: BetStrength
     public let rationale: String
+    public let strategyID: String?
+    public let estimatedWinProbability: Double?
+    public let expectedValue: Double?
     public var id: String { "\(kind.rawValue)-\(selection)" }
-    public init(kind: BetKind, selection: String, edge: Double, strength: BetStrength, rationale: String) {
+    public init(kind: BetKind, selection: String, edge: Double, strength: BetStrength, rationale: String,
+                strategyID: String? = nil, estimatedWinProbability: Double? = nil, expectedValue: Double? = nil) {
         self.kind = kind; self.selection = selection; self.edge = edge; self.strength = strength; self.rationale = rationale
+        self.strategyID = strategyID; self.estimatedWinProbability = estimatedWinProbability; self.expectedValue = expectedValue
     }
 }
 

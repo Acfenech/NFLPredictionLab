@@ -6,6 +6,8 @@ A private SwiftUI prototype with a shared Swift forecasting engine. Open `NFLPre
 
 ## MVP 1.3 historical learning
 
+MVP 1.6 replaces broad edge-only betting rules with conservative strategy profiles. Spread and total candidates now require model-only confirmation, estimated cover probability, positive expected value, and larger strong-edge thresholds. Moneylines require price-aware expected value, a meaningful no-vig probability edge, minimum modeled win probability, and a bounded odds range. The same rules are applied without alteration to current picks and every historical walk-forward grade.
+
 MVP 1.5 expands the historical replay to ten completed seasons. The first season supplies the initial training window and the following nine seasons produce progressively trained, untouched walk-forward grades, increasing the evidence available for less-frequent strong edges without mixing live picks into validation. The local app and scheduled cloud worker share the same window definition.
 
 MVP 1.4 makes betting validation an auditable historical gate. Only rolling out-of-sample grades can grant a Validated label; live results and saved app forecasts cannot inflate the evidence. Each grade retains its held-out season, and a market must meet its sample, win-rate or return, positive-profit, three-season coverage, and cross-season profitability requirements. The Results screen shows progress and every unmet requirement separately for spreads, totals, and moneylines.

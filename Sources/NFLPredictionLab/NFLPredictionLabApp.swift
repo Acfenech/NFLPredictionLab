@@ -102,11 +102,15 @@ struct WeeklyDashboardView: View {
         model.predictions.flatMap { prediction in
             prediction.bettingRecommendations.filter { $0.strength == .strong }.map { recommendation in
                 let probability: Double
+                if let estimated = recommendation.estimatedWinProbability {
+                    probability = estimated
+                } else {
                 switch recommendation.kind {
                 case .moneyline:
                     probability = recommendation.selection.hasPrefix(prediction.matchup.home.abbreviation) ? prediction.homeWinProbability : 1 - prediction.homeWinProbability
                 case .spread: probability = min(0.90, max(0.50, 1 / (1 + exp(-recommendation.edge / 7.0))))
                 case .total: probability = min(0.90, max(0.50, 1 / (1 + exp(-recommendation.edge / 9.0))))
+                }
                 }
                 return (prediction, recommendation, probability)
             }
@@ -387,6 +391,7 @@ struct BettingView: View {
             ? (line.homeMoneyline ?? -110) : (line.awayMoneyline ?? -110)
     }
     private func estimatedWinProbability(for recommendation: BetRecommendation, prediction: Prediction) -> Double {
+        if let estimated = recommendation.estimatedWinProbability { return estimated }
         switch recommendation.kind {
         case .moneyline:
             return recommendation.selection.hasPrefix(prediction.matchup.home.abbreviation)

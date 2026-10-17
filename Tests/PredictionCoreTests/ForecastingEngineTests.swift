@@ -197,6 +197,17 @@ import Testing
     #expect(prediction.bettingRecommendations.contains { $0.kind == .spread && $0.strength == .strong })
     #expect(prediction.bettingRecommendations.contains { $0.kind == .total && $0.strength != .pass })
     #expect(prediction.bettingRecommendations.contains { $0.kind == .moneyline && $0.selection.contains("H moneyline") })
+    #expect(prediction.bettingRecommendations.allSatisfy { $0.estimatedWinProbability != nil && $0.expectedValue != nil })
+}
+
+@Test func expensiveMoneylineDoesNotBecomeARecommendedBetWithoutValue() {
+    let away = Team(abbreviation: "A", name: "Away", offensiveRating: 0, defensiveRating: 0)
+    let home = Team(abbreviation: "H", name: "Home", offensiveRating: 0, defensiveRating: 0)
+    let line = BettingLine(homeMoneyline: -450, awayMoneyline: 340)
+    let prediction = Prediction(matchup: Matchup(week: 1, kickoff: .now, away: away, home: home, bettingLine: line),
+                                homeScore: 28, awayScore: 17, homeWinProbability: 0.86, simulations: 1)
+    let moneyline = prediction.bettingRecommendations.first { $0.kind == .moneyline }
+    #expect(moneyline?.strength == .pass)
 }
 
 @Test func bettingBacktestGradesSpreadTotalAndMoneyline() {
