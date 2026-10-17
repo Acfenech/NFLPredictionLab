@@ -252,9 +252,12 @@ struct UserGuideView: View {
                     GuideItem(icon: "arrow.counterclockwise.circle.fill", title: "Reset to Recommended", detail: "Restores the balanced planning defaults: 35% risk and 40% return preference. It does not change the bankroll, weekly amount, wagers, or entered odds.")
                     GuideItem(icon: "lock.shield.fill", title: "Validated recommendations", detail: "Allocates money only when a market passes its historical sample and performance gate. If none qualifies, the validated recommendation remains $0 regardless of strategy settings.")
                     GuideItem(icon: "eye.trianglebadge.exclamationmark", title: "Model-ranked recommendations", detail: "The Bet Slip segmented control reveals this week’s strongest model edges even when they failed historical validation. They can receive suggested stakes, remain orange and explicitly marked Unvalidated, and do not gain credibility merely because this mode is enabled.")
+                    GuideItem(icon: "star.fill", title: "Best Bet This Week", detail: "The highest model edge in the current weekly plan is promoted for quick review. Compare its model probability with the sportsbook-implied probability, read the rationale, then complete the pre-bet checklist. Best Bet means highest-ranked—not guaranteed.")
+                    GuideItem(icon: "checklist", title: "Pre-bet checklist", detail: "Before placing a wager, enter the exact Bet365 price, confirm weekly exposure remains inside the budget, check that forecast data are current, and note whether the market has passed its historical grade. An incomplete item is a warning for review, not an automatic prediction of failure.")
                     GuideItem(icon: "square.stack.3d.up.fill", title: "Three parlay plans", detail: "Lower Variance uses two side/total legs, Balanced uses three diversified edges, and High Upside uses four legs with extra moneyline preference. Games are not repeated inside one parlay. Suggested stakes require validation unless you explicitly enable speculative recommendations.")
                     GuideItem(icon: "person.crop.circle.badge.plus", title: "Player Parlays", detail: "Open Bet Slip, then Player Parlays to compare three ready-made plans: Lower Variance, Balanced and High Upside. Expand a plan to review every leg, tap Use This Parlay, and replace the consensus line and combined price with the exact Bet365 offer. Search and filter the 1,700+ imported props when building your own. These recommendations rank market availability, price and diversification; they are not yet backed by a validated player-performance projection model.")
                     GuideItem(icon: "equal.square.fill", title: "Odds and returns", detail: "Every wager settles in one of two ways: a win returns the full stake plus profit, while a loss returns $0. The weekly outlook rounds the combined win probabilities to a projected win count, assigns those wins to the highest-probability selections, and totals their full returns. It is a scenario forecast, not a guarantee. Enter the exact American odds shown by your sportsbook because every displayed return changes with the price.")
+                    GuideItem(icon: "chart.pie.fill", title: "Weekly exposure footer", detail: "The bottom bar changes with the selected Bet Slip tab and always shows total user-entered exposure against the funded weekly limit. Player Parlays displays its own suggested exposure and all-win return rather than repeating the singles scenario.")
                 }
 
                 Section("Accuracy terms") {
@@ -671,6 +674,18 @@ struct BettingView: View {
                 : partial
         }
         let weeklyNet = weeklyReturned - weeklyStake
+        let bestBet = currentAllocations.max { lhs, rhs in
+            let lhsEdge = lhs.modelWinProbability - (OddsMath.impliedProbability(american: lhs.odds) ?? 0)
+            let rhsEdge = rhs.modelWinProbability - (OddsMath.impliedProbability(american: rhs.odds) ?? 0)
+            return lhsEdge < rhsEdge
+        }
+        let playerSuggestedExposure = min(bankroll.weeklyBudget, bankroll.bankroll) * recommendedPlayerParlays.map(\.budgetShare).reduce(0, +)
+        let playerMaximumReturn = recommendedPlayerParlays.reduce(0.0) { partial, parlay in
+            let stake = min(bankroll.weeklyBudget, bankroll.bankroll) * parlay.budgetShare
+            let odds = OddsMath.parlayAmerican(parlay.legs.map(\.quote.odds)) ?? 100
+            return partial + (OddsMath.totalReturn(stake: stake, american: odds) ?? 0)
+        }
+        let latestPlayerPropUpdate = availablePlayerProps.compactMap(\.updatedAt).max()
         NavigationStack {
             VStack(spacing: 0) {
                 Picker("Bet Slip section", selection: $selectedTab) {
@@ -700,11 +715,11 @@ struct BettingView: View {
                         }
                         VStack(alignment: .leading) {
                             Text(weeklyReturned.formatted(.currency(code: "USD"))).font(.title2.bold()).monospacedDigit()
-                            Text("Predicted return").font(.caption).foregroundStyle(.secondary)
+                            Text("Scenario return").font(.caption).foregroundStyle(.secondary)
                         }
                         VStack(alignment: .leading) {
                             Text(weeklyNet.formatted(.currency(code: "USD").sign(strategy: .always()))).font(.title2.bold()).foregroundStyle(weeklyNet >= 0 ? Color.green : Color.red).monospacedDigit()
-                            Text("Predicted net").font(.caption).foregroundStyle(.secondary)
+                            Text("Scenario net").font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
                     }
@@ -712,6 +727,43 @@ struct BettingView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 } header: {
                     Label("This Week’s Decision Summary", systemImage: "chart.bar.fill")
+                }
+
+                if let bestBet {
+                    Section {
+                        let implied = OddsMath.impliedProbability(american: bestBet.odds) ?? 0
+                        let edge = bestBet.modelWinProbability - implied
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(bestBet.recommendation.selection).font(.title3.bold())
+                                    Text("\(bestBet.matchup) · \(bestBet.recommendation.kind.rawValue)")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text(bestBet.amount.formatted(.currency(code: "USD")))
+                                    .font(.title3.bold()).monospacedDigit()
+                            }
+                            HStack(spacing: 16) {
+                                Label("\(bestBet.modelWinProbability.formatted(.percent.precision(.fractionLength(1)))) model", systemImage: "brain.head.profile")
+                                Label("\(implied.formatted(.percent.precision(.fractionLength(1)))) implied", systemImage: "building.columns")
+                                Label("\(edge.formatted(.percent.precision(.fractionLength(1)))) edge", systemImage: "chart.line.uptrend.xyaxis")
+                                Label(validatedKinds.contains(bestBet.recommendation.kind) ? "Validated" : "Unvalidated", systemImage: validatedKinds.contains(bestBet.recommendation.kind) ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                                    .foregroundStyle(validatedKinds.contains(bestBet.recommendation.kind) ? Color.green : Color.orange)
+                            }
+                            .font(.caption).monospacedDigit()
+                            Text(bestBet.recommendation.rationale).font(.caption).foregroundStyle(.secondary)
+                        }
+                    } header: {
+                        Label("Best Bet This Week", systemImage: "star.fill")
+                    }
+
+                    Section("Pre-bet checklist") {
+                        ChecklistRow(label: "Current price entered from Bet365", complete: bankroll.enteredOdds[bestBet.id] != nil)
+                        ChecklistRow(label: "Weekly exposure is within budget", complete: bankroll.manualTotal <= min(bankroll.weeklyBudget, bankroll.bankroll))
+                        ChecklistRow(label: "Forecast and market data are current", complete: predictions.compactMap(\.recalculatedAt).max().map { Date.now.timeIntervalSince($0) < 21_600 } ?? false)
+                        ChecklistRow(label: "Historical market grade passed", complete: validatedKinds.contains(bestBet.recommendation.kind))
+                    }
                 }
 
                 Section("Plan configuration") {
@@ -933,7 +985,8 @@ struct BettingView: View {
                                     .multilineTextAlignment(.trailing).frame(width: 90)
                             }
                             OddsReturnRow(odds: bankroll.oddsBinding(for: parlayKey, default: calculatedOdds),
-                                          stake: enteredStake, source: "Calculated leg price · replace with bet365 combined odds")
+                                          stake: enteredStake, source: "Calculated leg price · replace with Bet365 combined odds",
+                                          verified: bankroll.enteredOdds[parlayKey] != nil)
                         }.padding(.vertical, 5)
                     }
                     let fundedWeeklyAmount = min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll))
@@ -962,9 +1015,9 @@ struct BettingView: View {
                         LabeledContent("Total suggested parlay stake", value: totalParlayStake.formatted(.currency(code: "USD")))
                         LabeledContent("Anticipated profit if every parlay wins", value: totalParlayProfit.formatted(.currency(code: "USD")))
                         LabeledContent("Total returned if every parlay wins", value: (totalParlayStake + totalParlayProfit).formatted(.currency(code: "USD")))
-                        LabeledContent("Predicted weekly parlay record", value: "\(predictedParlayWinCount) wins · \(fundedParlays.count - predictedParlayWinCount) losses")
-                        LabeledContent("Predicted parlay return", value: predictedParlayReturned.formatted(.currency(code: "USD")))
-                        LabeledContent("Predicted parlay net", value: predictedParlayNet.formatted(.currency(code: "USD").sign(strategy: .always())))
+                        LabeledContent("Illustrative parlay record", value: "\(predictedParlayWinCount) wins · \(fundedParlays.count - predictedParlayWinCount) losses")
+                        LabeledContent("Illustrative parlay return", value: predictedParlayReturned.formatted(.currency(code: "USD")))
+                        LabeledContent("Illustrative parlay net", value: predictedParlayNet.formatted(.currency(code: "USD").sign(strategy: .always())))
                     }
                     .fontWeight(.semibold)
                     .monospacedDigit()
@@ -984,17 +1037,22 @@ struct BettingView: View {
                         Label("No synced player props yet. The scheduled worker fetches them on Sunday, or during a manual workflow run.", systemImage: "clock.arrow.circlepath")
                             .font(.caption).foregroundStyle(.orange)
                     } else {
-                        let suggestedExposure = min(bankroll.weeklyBudget, bankroll.bankroll) * recommendedPlayerParlays.map(\.budgetShare).reduce(0, +)
                         HStack(spacing: 24) {
                             LabeledContent("Recommended plans", value: "3")
-                            LabeledContent("Suggested exposure", value: suggestedExposure.formatted(.currency(code: "USD")))
+                            LabeledContent("Suggested exposure", value: playerSuggestedExposure.formatted(.currency(code: "USD")))
                             LabeledContent("Available markets", value: availablePlayerProps.count.formatted())
                         }
                         .font(.callout.weight(.semibold)).monospacedDigit()
+                        if let latestPlayerPropUpdate {
+                            Label("Player odds updated \(latestPlayerPropUpdate, style: .relative)", systemImage: "clock.arrow.circlepath")
+                                .font(.caption)
+                                .foregroundStyle(Date.now.timeIntervalSince(latestPlayerPropUpdate) < 21_600 ? Color.secondary : Color.orange)
+                        }
                         ForEach(recommendedPlayerParlays) { parlay in
                             let combinedOdds = OddsMath.parlayAmerican(parlay.legs.map(\.quote.odds)) ?? 100
                             let suggestedStake = min(bankroll.weeklyBudget, bankroll.bankroll) * parlay.budgetShare
                             let totalReturn = OddsMath.totalReturn(stake: suggestedStake, american: combinedOdds) ?? 0
+                            let impliedHitProbability = OddsMath.impliedProbability(american: combinedOdds) ?? 0
                             DisclosureGroup {
                                 VStack(alignment: .leading, spacing: 8) {
                                     ForEach(Array(parlay.legs.enumerated()), id: \.element.id) { index, candidate in
@@ -1023,6 +1081,8 @@ struct BettingView: View {
                                             bankroll.manualStakes["player-prop-parlay"] = suggestedStake
                                         }.buttonStyle(.borderedProminent)
                                     }
+                                    Label("Sportsbook-implied hit probability: \(impliedHitProbability.formatted(.percent.precision(.fractionLength(1)))) · not a model projection", systemImage: "percent")
+                                        .font(.caption).foregroundStyle(.secondary)
                                 }.padding(.top, 6)
                             } label: {
                                 HStack {
@@ -1108,7 +1168,8 @@ struct BettingView: View {
                         OddsReturnRow(
                             odds: bankroll.oddsBinding(for: wagerKey, default: calculatedOdds),
                             stake: enteredStake,
-                            source: "Calculated from entered legs · replace with the exact combined bet365 price"
+                            source: "Calculated from entered legs · replace with the exact combined Bet365 price",
+                            verified: bankroll.enteredOdds[wagerKey] != nil
                         )
                         HStack {
                             Text("My player parlay wager").font(.caption).foregroundStyle(.secondary)
@@ -1186,7 +1247,8 @@ struct BettingView: View {
                                     }
                                     OddsReturnRow(odds: bankroll.oddsBinding(for: wagerKey, default: fallbackOdds),
                                         stake: enteredStake,
-                                        source: recommendation.kind == .moneyline ? (prediction.matchup.bettingLine?.source ?? "Consensus moneyline") : "General -110 estimate · replace with current sportsbook price")
+                                        source: recommendation.kind == .moneyline ? (prediction.matchup.bettingLine?.source ?? "Consensus moneyline") : "General -110 estimate · replace with current sportsbook price",
+                                        verified: bankroll.enteredOdds[wagerKey] != nil)
                                 }.padding(.vertical, 3)
                             }
                         }
@@ -1205,12 +1267,31 @@ struct BettingView: View {
             .navigationTitle("Bet Slip")
             .safeAreaInset(edge: .bottom) {
                 HStack(spacing: 18) {
-                    Label("Stake \(weeklyStake.formatted(.currency(code: "USD")))", systemImage: "dollarsign.circle.fill")
-                    Label(currentAllocations.isEmpty ? "Scenario —" : "Scenario \(weeklyWinCount)–\(currentAllocations.count - weeklyWinCount)", systemImage: "chart.bar.fill")
-                    Spacer()
-                    Text("Return \(weeklyReturned.formatted(.currency(code: "USD")))")
-                    Text("Net \(weeklyNet.formatted(.currency(code: "USD").sign(strategy: .always())))")
-                        .foregroundStyle(weeklyNet >= 0 ? Color.green : Color.red)
+                    switch selectedTab {
+                    case .plan:
+                        Label("Stake \(weeklyStake.formatted(.currency(code: "USD")))", systemImage: "dollarsign.circle.fill")
+                        Label(currentAllocations.isEmpty ? "Scenario —" : "Scenario \(weeklyWinCount)–\(currentAllocations.count - weeklyWinCount)", systemImage: "chart.bar.fill")
+                        Spacer()
+                        Text("Scenario return \(weeklyReturned.formatted(.currency(code: "USD")))")
+                        Text("Net \(weeklyNet.formatted(.currency(code: "USD").sign(strategy: .always())))")
+                            .foregroundStyle(weeklyNet >= 0 ? Color.green : Color.red)
+                    case .playerParlays:
+                        Label("Suggested exposure \(playerSuggestedExposure.formatted(.currency(code: "USD")))", systemImage: "person.2.fill")
+                        Label("\(recommendedPlayerParlays.count) plans", systemImage: "list.bullet.rectangle")
+                        Spacer()
+                        Text("All-win return \(playerMaximumReturn.formatted(.currency(code: "USD")))")
+                    case .gameParlays:
+                        Label("\(currentParlayPlans.count) game parlays", systemImage: "square.stack.3d.up.fill")
+                        Spacer()
+                        Text("Entered exposure \(bankroll.manualTotal.formatted(.currency(code: "USD")))")
+                    case .markets:
+                        Label("\(predictions.count) games", systemImage: "sportscourt.fill")
+                        Spacer()
+                        Text("Entered exposure \(bankroll.manualTotal.formatted(.currency(code: "USD")))")
+                    }
+                    Divider().frame(height: 18)
+                    Text("Weekly exposure \(bankroll.manualTotal.formatted(.currency(code: "USD"))) / \(min(bankroll.weeklyBudget, bankroll.bankroll).formatted(.currency(code: "USD")))")
+                        .foregroundStyle(bankroll.manualTotal <= min(bankroll.weeklyBudget, bankroll.bankroll) ? Color.secondary : Color.orange)
                 }
                 .font(.callout.weight(.semibold))
                 .monospacedDigit()
@@ -1245,10 +1326,21 @@ struct BettingView: View {
     }
 }
 
+private struct ChecklistRow: View {
+    let label: String
+    let complete: Bool
+    var body: some View {
+        Label(label, systemImage: complete ? "checkmark.circle.fill" : "circle")
+            .foregroundStyle(complete ? Color.green : Color.orange)
+            .font(.callout)
+    }
+}
+
 private struct OddsReturnRow: View {
     @Binding var odds: Int
     let stake: Double
     let source: String
+    var verified = false
     var body: some View {
         let probability = OddsMath.impliedProbability(american: odds)
         let profit = OddsMath.profit(stake: stake, american: odds)
@@ -1258,6 +1350,10 @@ private struct OddsReturnRow: View {
                 Text("American odds").font(.caption).foregroundStyle(.secondary)
                 TextField("-110", value: $odds, format: .number.sign(strategy: .always()))
                     .multilineTextAlignment(.trailing).frame(width: 90)
+                Label(verified ? "Bet365 price entered" : "Needs Bet365 verification",
+                      systemImage: verified ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(verified ? Color.green : Color.orange)
                 Spacer()
                 Text("Implied \((probability ?? 0).formatted(.percent.precision(.fractionLength(1))))")
                     .font(.caption).foregroundStyle(.secondary)
