@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Security)
+import Security
+#endif
 #if canImport(PredictionCore)
 import PredictionCore
 #endif
@@ -42,8 +45,18 @@ final class AppModel: ObservableObject {
         if let repository {
             self.repository = repository
         } else {
-#if canImport(CloudKit)
+#if canImport(CloudKit) && canImport(Security)
+            let task = SecTaskCreateFromSelf(nil)
+            let services = task.flatMap {
+                SecTaskCopyValueForEntitlement($0, "com.apple.developer.icloud-services" as CFString, nil)
+            } as? [String]
+            if services?.contains("CloudKit") == true || services?.contains("CloudKit-Anonymous") == true {
             self.repository = CloudKitPredictionRepository(containerIdentifier: "iCloud.com.acfenech.NFLPredictionLab")
+            } else {
+                let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+                self.repository = LocalPredictionRepository(url: base.appending(path: "NFLPredictionLab/predictions.json"))
+                self.storageLabel = "On this device"
+            }
 #else
             let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             self.repository = LocalPredictionRepository(url: base.appending(path: "NFLPredictionLab/predictions.json"))
