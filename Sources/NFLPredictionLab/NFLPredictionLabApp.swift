@@ -506,7 +506,21 @@ struct BettingView: View {
                                 }
                             }
                         }
-                        LabeledContent(showUnvalidatedRecommendations ? "Total speculative" : "Total recommended", value: allocations.map(\.amount).reduce(0, +).formatted(.currency(code: "USD")))
+                        let totalStake = allocations.map(\.amount).reduce(0, +)
+                        let totalProfit = allocations.reduce(0) { partial, allocation in
+                            partial + (OddsMath.profit(stake: allocation.amount, american: allocation.odds) ?? 0)
+                        }
+                        let totalReturned = totalStake + totalProfit
+                        VStack(spacing: 5) {
+                            LabeledContent(showUnvalidatedRecommendations ? "Total speculative stake" : "Total recommended stake",
+                                           value: totalStake.formatted(.currency(code: "USD")))
+                            LabeledContent("Anticipated profit if every bet wins",
+                                           value: totalProfit.formatted(.currency(code: "USD")))
+                            LabeledContent("Total returned if every bet wins",
+                                           value: totalReturned.formatted(.currency(code: "USD")))
+                        }
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
                     }
                 }
 
@@ -563,6 +577,26 @@ struct BettingView: View {
                                           stake: enteredStake, source: "Calculated leg price · replace with bet365 combined odds")
                         }.padding(.vertical, 5)
                     }
+                    let fundedWeeklyAmount = min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll))
+                    let fundedParlays = parlayPlans.filter { $0.isFundable(showingUnvalidated: showUnvalidatedRecommendations) }
+                    let totalParlayStake = fundedParlays.reduce(0) { partial, parlay in
+                        let riskMultiplier = parlay.id == "lower" ? 1.25 - bankroll.riskLevel * 0.5 : parlay.id == "upside" ? 0.5 + bankroll.riskLevel : 1.0
+                        return partial + fundedWeeklyAmount * parlay.budgetShare * riskMultiplier
+                    }
+                    let totalParlayProfit = fundedParlays.reduce(0) { partial, parlay in
+                        let riskMultiplier = parlay.id == "lower" ? 1.25 - bankroll.riskLevel * 0.5 : parlay.id == "upside" ? 0.5 + bankroll.riskLevel : 1.0
+                        let stake = fundedWeeklyAmount * parlay.budgetShare * riskMultiplier
+                        let calculatedOdds = OddsMath.parlayAmerican(parlay.legs.map(\.odds)) ?? 100
+                        let activeOdds = bankroll.odds(for: "parlay-\(parlay.id)", default: calculatedOdds)
+                        return partial + (OddsMath.profit(stake: stake, american: activeOdds) ?? 0)
+                    }
+                    VStack(spacing: 5) {
+                        LabeledContent("Total suggested parlay stake", value: totalParlayStake.formatted(.currency(code: "USD")))
+                        LabeledContent("Anticipated profit if every parlay wins", value: totalParlayProfit.formatted(.currency(code: "USD")))
+                        LabeledContent("Total returned if every parlay wins", value: (totalParlayStake + totalParlayProfit).formatted(.currency(code: "USD")))
+                    }
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
                     Text(showUnvalidatedRecommendations
                          ? "Speculative parlay amounts are visible by your choice even though the legs failed validation. Parlays compound estimation error and have substantially higher variance."
                          : "Parlay legs are selected from different games to reduce direct correlation. Every leg must pass its market validation gate before the app recommends a nonzero stake. Parlays have higher variance than single wagers.")
