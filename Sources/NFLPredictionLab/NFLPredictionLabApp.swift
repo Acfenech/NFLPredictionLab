@@ -176,6 +176,14 @@ struct UserGuideView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
 
+                Section("Bankroll planner") {
+                    GuideItem(icon: "dollarsign.circle.fill", title: "Bankroll", detail: "Enter the amount reserved for betting. It is stored privately on this device and is never transferred or connected to a sportsbook.")
+                    GuideItem(icon: "calendar.badge.clock", title: "Weekly wager amount", detail: "Sets the maximum amount intended for the current week. User-entered wager fields show how much remains and warn when the plan exceeds this amount or the bankroll.")
+                    GuideItem(icon: "slider.horizontal.2.square", title: "Risk level", detail: "Controls how evenly or aggressively the recommended weekly amount is concentrated among validated edges. It does not change the forecast probabilities.")
+                    GuideItem(icon: "arrow.up.right.circle.fill", title: "Return target", detail: "Controls preference for steadier allocations versus higher-upside markets. Higher upside also means greater variance and does not imply better expected results.")
+                    GuideItem(icon: "lock.shield.fill", title: "Recommended plan", detail: "Allocates money only when a market passes the historical validation gate. If none qualifies, the recommended amount remains $0 regardless of slider settings.")
+                }
+
                 Section("Accuracy terms") {
                     GuideItem(icon: "checkmark.circle", title: "Winner accuracy", detail: "The percentage of games where the predicted winner won.")
                     GuideItem(icon: "scope", title: "Mean score error", detail: "The average absolute difference between each team’s predicted and actual score. Lower is better.")
@@ -217,9 +225,50 @@ private struct GuideItem: View {
     }
 }
 
+@MainActor
+final class BankrollStore: ObservableObject {
+    @Published var bankroll: Double { didSet { save() } }
+    @Published var weeklyBudget: Double { didSet { save() } }
+    @Published var riskLevel: Double { didSet { save() } }
+    @Published var returnLevel: Double { didSet { save() } }
+    @Published var manualStakes: [String: Double] { didSet { save() } }
+
+    private static let key = "bankrollPlanner.v1"
+    private struct Snapshot: Codable { let bankroll, weeklyBudget, riskLevel, returnLevel: Double; let manualStakes: [String: Double] }
+
+    init() {
+        if let data = UserDefaults.standard.data(forKey: Self.key), let saved = try? JSONDecoder().decode(Snapshot.self, from: data) {
+            bankroll = saved.bankroll; weeklyBudget = saved.weeklyBudget
+            riskLevel = saved.riskLevel; returnLevel = saved.returnLevel; manualStakes = saved.manualStakes
+        } else {
+            bankroll = 1_000; weeklyBudget = 50; riskLevel = 0.35; returnLevel = 0.40; manualStakes = [:]
+        }
+    }
+
+    var manualTotal: Double { manualStakes.values.reduce(0, +) }
+    func stakeBinding(for key: String) -> Binding<Double> {
+        Binding(get: { self.manualStakes[key] ?? 0 }, set: { value in
+            self.manualStakes[key] = max(0, value)
+        })
+    }
+    func clearWeeklyWagers() { manualStakes = [:] }
+    private func save() {
+        let snapshot = Snapshot(bankroll: max(0, bankroll), weeklyBudget: max(0, weeklyBudget), riskLevel: riskLevel, returnLevel: returnLevel, manualStakes: manualStakes)
+        if let data = try? JSONEncoder().encode(snapshot) { UserDefaults.standard.set(data, forKey: Self.key) }
+    }
+}
+
+private struct RecommendedAllocation: Identifiable {
+    let id: String
+    let matchup: String
+    let recommendation: BetRecommendation
+    let amount: Double
+}
+
 struct BettingView: View {
     let predictions: [Prediction]
     let grades: [GradedPrediction]
+    @StateObject private var bankroll = BankrollStore()
     @State private var filter = "All"
     @State private var showAllPasses = false
     private var validatedKinds: Set<BetKind> {
@@ -235,9 +284,90 @@ struct BettingView: View {
             .sorted { ($0.bettingRecommendations.map(\.edge).max() ?? 0) > ($1.bettingRecommendations.map(\.edge).max() ?? 0) }
             .prefix(5))
     }
+    private var allocations: [RecommendedAllocation] {
+        let eligible = predictions.flatMap { prediction in
+            prediction.bettingRecommendations.compactMap { recommendation -> (Prediction, BetRecommendation)? in
+                validatedKinds.contains(recommendation.kind) && recommendation.strength != .pass ? (prediction, recommendation) : nil
+            }
+        }
+        guard !eligible.isEmpty else { return [] }
+        let weights = eligible.map { _, recommendation -> Double in
+            let strength = recommendation.strength == .strong ? 2.0 : 1.0
+            let concentration = pow(max(0.1, recommendation.edge), 0.35 + bankroll.riskLevel * 1.65)
+            let upside = recommendation.kind == .moneyline ? 1 + bankroll.returnLevel : 1 + bankroll.returnLevel * 0.2
+            return strength * concentration * upside
+        }
+        let totalWeight = weights.reduce(0, +)
+        let available = min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll))
+        return zip(eligible, weights).map { pair, weight in
+            let (prediction, recommendation) = pair
+            let key = "\(prediction.matchup.gameKey)-\(recommendation.id)"
+            return RecommendedAllocation(id: key, matchup: "\(prediction.matchup.away.abbreviation) at \(prediction.matchup.home.abbreviation)", recommendation: recommendation, amount: totalWeight > 0 ? available * weight / totalWeight : 0)
+        }.sorted { $0.amount > $1.amount }
+    }
     var body: some View {
         NavigationStack {
             List {
+                Section("Bankroll & weekly plan") {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Bankroll").font(.caption).foregroundStyle(.secondary)
+                            HStack { Text("$"); TextField("Bankroll", value: $bankroll.bankroll, format: .number.precision(.fractionLength(2))).frame(maxWidth: 140) }
+                        }
+                        Spacer()
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Weekly wager amount").font(.caption).foregroundStyle(.secondary)
+                            HStack { Text("$"); TextField("Weekly amount", value: $bankroll.weeklyBudget, format: .number.precision(.fractionLength(2))).frame(maxWidth: 140) }
+                        }
+                    }
+                    HStack {
+                        LabeledContent("User-entered wagers", value: bankroll.manualTotal.formatted(.currency(code: "USD")))
+                        Spacer()
+                        LabeledContent("Weekly remaining", value: max(0, bankroll.weeklyBudget - bankroll.manualTotal).formatted(.currency(code: "USD")))
+                    }
+                    if bankroll.manualTotal > bankroll.weeklyBudget {
+                        Label("Entered wagers exceed the weekly amount by \((bankroll.manualTotal - bankroll.weeklyBudget).formatted(.currency(code: "USD"))).", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    }
+                    if bankroll.weeklyBudget > bankroll.bankroll {
+                        Label("Weekly amount cannot be fully funded by the current bankroll.", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                    }
+                    Button("Clear weekly wagers", role: .destructive) { bankroll.clearWeeklyWagers() }.disabled(bankroll.manualTotal == 0)
+                }
+
+                Section("Recommended allocation controls") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack { Text("Risk level").fontWeight(.semibold); Spacer(); Text(riskLabel).foregroundStyle(.secondary) }
+                        Slider(value: $bankroll.riskLevel, in: 0...1) { Text("Risk level") } minimumValueLabel: { Text("Low") } maximumValueLabel: { Text("High") }
+                        Text("Higher risk concentrates more of the weekly amount in the strongest measured edges.").font(.caption).foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack { Text("Return target").fontWeight(.semibold); Spacer(); Text(returnLabel).foregroundStyle(.secondary) }
+                        Slider(value: $bankroll.returnLevel, in: 0...1) { Text("Return target") } minimumValueLabel: { Text("Steady") } maximumValueLabel: { Text("Upside") }
+                        Text("Higher return preference gives more weight to higher-upside markets such as moneylines; it does not improve their probability of winning.").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Recommended weekly plan") {
+                    if allocations.isEmpty {
+                        Label("$0 recommended · no market passes validation", systemImage: "lock.shield.fill")
+                            .font(.headline).foregroundStyle(.orange)
+                        Text("The planner will distribute the funded weekly amount only across recommendations that satisfy the historical sample-size and win-rate gate.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        ForEach(allocations) { allocation in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(allocation.recommendation.selection).fontWeight(.semibold)
+                                    Text("\(allocation.matchup) · \(allocation.recommendation.kind.rawValue)").font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text(allocation.amount.formatted(.currency(code: "USD"))).font(.headline).monospacedDigit()
+                            }
+                        }
+                        LabeledContent("Total recommended", value: allocations.map(\.amount).reduce(0, +).formatted(.currency(code: "USD")))
+                    }
+                }
+
                 Section {
                     if validatedKinds.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
@@ -270,6 +400,13 @@ struct BettingView: View {
                                     Text(recommendation.rationale).font(.caption).foregroundStyle(.secondary)
                                     Text("Evidence: \(evidence.graded) strong-edge samples · \(evidence.winRate.formatted(.percent.precision(.fractionLength(1)))) wins")
                                         .font(.caption2).foregroundStyle(.tertiary)
+                                    HStack {
+                                        Text("My wager").font(.caption).foregroundStyle(.secondary)
+                                        Spacer()
+                                        Text("$")
+                                        TextField("0.00", value: bankroll.stakeBinding(for: "\(prediction.matchup.gameKey)-\(recommendation.id)"), format: .number.precision(.fractionLength(2)))
+                                            .multilineTextAlignment(.trailing).frame(width: 90)
+                                    }
                                 }.padding(.vertical, 3)
                             }
                         }
@@ -285,6 +422,8 @@ struct BettingView: View {
             }.navigationTitle("Betting Analysis")
         }
     }
+    private var riskLabel: String { bankroll.riskLevel < 0.34 ? "Conservative" : bankroll.riskLevel < 0.67 ? "Balanced" : "Aggressive" }
+    private var returnLabel: String { bankroll.returnLevel < 0.34 ? "Steady" : bankroll.returnLevel < 0.67 ? "Balanced" : "High upside" }
 }
 
 struct PredictionsView: View {
@@ -513,7 +652,7 @@ struct AccuracyView: View {
                         LabeledContent("Balanced score", value: summary.balancedAccuracy.formatted(.percent.precision(.fractionLength(0))))
                     }
                     Section("Benchmark comparison") {
-                        LabeledContent("MVP 1.0 winner accuracy", value: summary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
+                        LabeledContent("MVP 1.1 winner accuracy", value: summary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
                         LabeledContent("Always choose home", value: homeBaseline.formatted(.percent.precision(.fractionLength(0))))
                         if !marketGrades.isEmpty {
                             LabeledContent("Market favorite", value: (Double(marketCorrect) / Double(marketGrades.count)).formatted(.percent.precision(.fractionLength(0))))
@@ -596,7 +735,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Model") {
-                    LabeledContent("Version", value: "MVP 1.0")
+                    LabeledContent("Version", value: "MVP 1.1")
                     LabeledContent("Objective", value: "50% winner · 50% score")
                     LabeledContent("Runs per matchup", value: "10,000")
                     Text("Separate margin and total estimates combine team ratings with consensus market inputs. Confidence is recalibrated from prior seasons; weather, travel, QB and injury context are included when a configured feed supplies them.").font(.footnote).foregroundStyle(.secondary)
