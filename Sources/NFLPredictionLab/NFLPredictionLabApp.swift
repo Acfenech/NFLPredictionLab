@@ -214,7 +214,7 @@ struct UserGuideView: View {
                 Section("Screen guide") {
                     GuideItem(icon: "calendar", title: "This Week", detail: "The betting command center. It surfaces the strongest opportunities, bankroll exposure, projected weekly record and warnings that need attention.")
                     GuideItem(icon: "sportscourt.fill", title: "Picks", detail: "The sortable, filterable matchup board. Each card separates the predicted game winner from the best available wager and shows the market line with its home-team label.")
-                    GuideItem(icon: "list.clipboard.fill", title: "Bet Slip", detail: "The planning workspace for recommendation mode, bankroll, weekly amount, strategy presets, singles, parlays, entered wagers and outcome totals.")
+                    GuideItem(icon: "list.clipboard.fill", title: "Bet Slip", detail: "A three-tab planning workspace: Weekly Plan contains bankroll controls and suggested singles, Parlays isolates multi-leg options, and All Markets provides detailed evidence, odds and manual wager entry for every matchup.")
                     GuideItem(icon: "chart.line.uptrend.xyaxis", title: "Results", detail: "Historical grading, validation records, calibration and performance by market. Use this evidence to judge whether a recommendation type deserves trust.")
                     GuideItem(icon: "slider.horizontal.3", title: "Model & Data", detail: "Data freshness, coverage, source status and manual injury or quarterback adjustments. Resolve warnings here before relying on a projection.")
                 }
@@ -433,6 +433,11 @@ private struct WeeklyBudgetEditor: View {
 }
 
 struct BettingView: View {
+    private enum BettingTab: String, CaseIterable {
+        case plan = "Weekly Plan"
+        case parlays = "Parlays"
+        case markets = "All Markets"
+    }
     let predictions: [Prediction]
     let grades: [GradedPrediction]
     @ObservedObject var bankroll: BankrollStore
@@ -441,6 +446,7 @@ struct BettingView: View {
     @State private var filter = "All"
     @State private var showAllPasses = false
     @State private var showUnvalidatedRecommendations = true
+    @State private var selectedTab: BettingTab = .plan
 
     init(predictions: [Prediction], grades: [GradedPrediction], bankroll: BankrollStore) {
         self.predictions = predictions
@@ -573,7 +579,18 @@ struct BettingView: View {
         }
         let weeklyNet = weeklyReturned - weeklyStake
         NavigationStack {
-            List {
+            VStack(spacing: 0) {
+                Picker("Bet Slip section", selection: $selectedTab) {
+                    ForEach(BettingTab.allCases, id: \.self) { tab in
+                        Text(tab.rawValue).tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                Divider()
+                List {
+                if selectedTab == .plan {
                 Section {
                     HStack(spacing: 28) {
                         VStack(alignment: .leading) {
@@ -754,7 +771,9 @@ struct BettingView: View {
                         .monospacedDigit()
                     }
                 }
+                }
 
+                if selectedTab == .parlays {
                 Section(showUnvalidatedRecommendations ? "Three speculative parlay plans" : "Three parlay plans") {
                     let fundableParlayProbabilities = currentParlayPlans.filter { $0.isFundable(showingUnvalidated: showUnvalidatedRecommendations) }
                     let predictedParlayWinCount = min(fundableParlayProbabilities.count, max(0, Int(fundableParlayProbabilities.map { $0.legs.map(\.modelWinProbability).reduce(1, *) }.reduce(0, +).rounded())))
@@ -861,7 +880,9 @@ struct BettingView: View {
                          : "Parlay legs are selected from different games to reduce direct correlation. Every leg must pass its market validation gate before the app recommends a nonzero stake. Parlays have higher variance than single wagers.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                }
 
+                if selectedTab == .markets {
                 Section {
                     if validatedKinds.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
@@ -927,7 +948,10 @@ struct BettingView: View {
                     Text("Lines can move and no projection guarantees a result. Verify the current price and player status independently. Use only amounts you can afford to lose.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-            }.navigationTitle("Bet Slip")
+                }
+                }
+            }
+            .navigationTitle("Bet Slip")
         }
     }
     private var riskLabel: String { bankroll.riskLevel < 0.34 ? "Conservative" : bankroll.riskLevel < 0.67 ? "Balanced" : "Aggressive" }
