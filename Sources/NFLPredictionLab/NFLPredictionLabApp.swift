@@ -182,6 +182,7 @@ struct UserGuideView: View {
                     GuideItem(icon: "calendar.badge.clock", title: "Weekly wager amount", detail: "Sets the maximum amount intended for the current week. User-entered wager fields show how much remains and warn when the plan exceeds this amount or the bankroll.")
                     GuideItem(icon: "slider.horizontal.2.square", title: "Risk level", detail: "Controls how evenly or aggressively the recommended weekly amount is concentrated among validated edges. It does not change the forecast probabilities.")
                     GuideItem(icon: "arrow.up.right.circle.fill", title: "Return target", detail: "Controls preference for steadier allocations versus higher-upside markets. Higher upside also means greater variance and does not imply better expected results.")
+                    GuideItem(icon: "arrow.counterclockwise.circle.fill", title: "Reset to Recommended", detail: "Restores the balanced planning defaults: 35% risk and 40% return preference. It does not change the bankroll, weekly amount, wagers, or entered odds.")
                     GuideItem(icon: "lock.shield.fill", title: "Recommended plan", detail: "Allocates money only when a market passes the historical validation gate. If none qualifies, the recommended amount remains $0 regardless of slider settings.")
                     GuideItem(icon: "square.stack.3d.up.fill", title: "Three parlay plans", detail: "Lower Variance uses two side/total legs, Balanced uses three diversified edges, and High Upside uses four legs with extra moneyline preference. Games are not repeated inside one parlay, and every leg must be validated before its suggested stake exceeds $0.")
                     GuideItem(icon: "equal.square.fill", title: "Odds and returns", detail: "Enter the exact American odds shown by your sportsbook before placing a wager. Potential profit excludes the returned stake; total return includes it. Displayed returns are mathematical estimates and change when the price changes.")
@@ -231,6 +232,8 @@ private struct GuideItem: View {
 
 @MainActor
 final class BankrollStore: ObservableObject {
+    static let recommendedRisk = 0.35
+    static let recommendedReturn = 0.40
     @Published var bankroll: Double { didSet { save() } }
     @Published var weeklyBudget: Double { didSet { save() } }
     @Published var riskLevel: Double { didSet { save() } }
@@ -251,7 +254,9 @@ final class BankrollStore: ObservableObject {
             riskLevel = saved.riskLevel; returnLevel = saved.returnLevel; manualStakes = saved.manualStakes
             enteredOdds = saved.enteredOdds ?? [:]
         } else {
-            bankroll = 1_000; weeklyBudget = 50; riskLevel = 0.35; returnLevel = 0.40; manualStakes = [:]; enteredOdds = [:]
+            bankroll = 1_000; weeklyBudget = 50
+            riskLevel = Self.recommendedRisk; returnLevel = Self.recommendedReturn
+            manualStakes = [:]; enteredOdds = [:]
         }
     }
 
@@ -268,6 +273,10 @@ final class BankrollStore: ObservableObject {
         })
     }
     func clearWeeklyWagers() { manualStakes = [:] }
+    func resetAllocationPreferences() {
+        riskLevel = Self.recommendedRisk
+        returnLevel = Self.recommendedReturn
+    }
     private func save() {
         let snapshot = Snapshot(bankroll: max(0, bankroll), weeklyBudget: max(0, weeklyBudget), riskLevel: riskLevel, returnLevel: returnLevel, manualStakes: manualStakes, enteredOdds: enteredOdds)
         if let data = try? JSONEncoder().encode(snapshot) { UserDefaults.standard.set(data, forKey: Self.key) }
@@ -415,7 +424,7 @@ struct BettingView: View {
                     Button("Clear weekly wagers", role: .destructive) { bankroll.clearWeeklyWagers() }.disabled(bankroll.manualTotal == 0)
                 }
 
-                Section("Recommended allocation controls") {
+                Section {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack { Text("Risk level").fontWeight(.semibold); Spacer(); Text(riskLabel).foregroundStyle(.secondary) }
                         Slider(value: $bankroll.riskLevel, in: 0...1) { Text("Risk level") } minimumValueLabel: { Text("Low") } maximumValueLabel: { Text("High") }
@@ -425,6 +434,20 @@ struct BettingView: View {
                         HStack { Text("Return target").fontWeight(.semibold); Spacer(); Text(returnLabel).foregroundStyle(.secondary) }
                         Slider(value: $bankroll.returnLevel, in: 0...1) { Text("Return target") } minimumValueLabel: { Text("Steady") } maximumValueLabel: { Text("Upside") }
                         Text("Higher return preference gives more weight to higher-upside markets such as moneylines; it does not improve their probability of winning.").font(.caption).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    HStack {
+                        Text("Recommended allocation controls")
+                        Spacer()
+                        Button {
+                            withAnimation { bankroll.resetAllocationPreferences() }
+                        } label: {
+                            Label("Reset to Recommended", systemImage: "arrow.counterclockwise")
+                                .textCase(nil)
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(abs(bankroll.riskLevel - BankrollStore.recommendedRisk) < 0.001 &&
+                                  abs(bankroll.returnLevel - BankrollStore.recommendedReturn) < 0.001)
                     }
                 }
 
