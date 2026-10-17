@@ -204,4 +204,19 @@ import Testing
     #expect(performance.graded == 3)
     #expect(performance.wins == 3)
     #expect(performance.losses == 0)
+    #expect(performance.netUnits > 2.5)
+}
+
+@Test func moneylinePerformanceUsesPriceAdjustedReturn() {
+    let away = Team(abbreviation: "A", name: "Away", offensiveRating: 0, defensiveRating: 0)
+    let home = Team(abbreviation: "H", name: "Home", offensiveRating: 0, defensiveRating: 0)
+    let line = BettingLine(homeMoneyline: 200, awayMoneyline: -240)
+    let prediction = Prediction(matchup: Matchup(week: 1, kickoff: .now, away: away, home: home, bettingLine: line),
+                                homeScore: 28, awayScore: 20, homeWinProbability: 0.55, simulations: 1)
+    let win = GradedPrediction(prediction: prediction, actualHomeScore: 24, actualAwayScore: 20)
+    let loss = GradedPrediction(prediction: prediction, actualHomeScore: 17, actualAwayScore: 20)
+    let performance = Backtester.bettingPerformance([win, loss], kind: .moneyline)
+    #expect(performance.winRate == 0.5)
+    #expect(performance.netUnits == 1)
+    #expect(performance.returnOnStake == 0.5)
 }

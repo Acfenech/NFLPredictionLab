@@ -172,7 +172,7 @@ struct UserGuideView: View {
                 Section("Betting labels") {
                     GuideItem(icon: "hand.raised.fill", title: "Pass", detail: "The edge is too small, required data is missing, or the market has not passed historical validation. Passing is an intentional recommendation.")
                     GuideItem(icon: "lightbulb.fill", title: "Lean", detail: "The model finds a modest difference from the market, but uncertainty is still meaningful.")
-                    GuideItem(icon: "bolt.fill", title: "Strong edge", detail: "The model-market difference clears the higher threshold. This label can appear as actionable only after that market records at least 30 held-out strong-edge samples and a win rate of 54% or better.")
+                    GuideItem(icon: "bolt.fill", title: "Strong edge", detail: "The model-market difference clears the higher threshold. Spreads and totals become actionable only after 30 held-out samples and a 54% win rate. Moneylines require 100 samples and at least a 3% price-adjusted return on historical stakes.")
                     Text("Moneyline probability removes the sportsbook’s estimated margin before comparison. Spread and total records count wins, losses and pushes. Historical results do not include price changes, limits, fees or the exact line available to you.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
@@ -313,6 +313,9 @@ struct BettingView: View {
     private var validatedKinds: Set<BetKind> {
         Set([BetKind.spread, .total, .moneyline].filter { kind in
             let performance = Backtester.bettingPerformance(grades, kind: kind, strongOnly: true)
+            if kind == .moneyline {
+                return performance.graded >= 100 && performance.returnOnStake >= 0.03
+            }
             return performance.graded >= 30 && performance.winRate >= 0.54
         })
     }
@@ -326,7 +329,7 @@ struct BettingView: View {
     private var allocations: [RecommendedAllocation] {
         let eligible = predictions.flatMap { prediction in
             prediction.bettingRecommendations.compactMap { recommendation -> (Prediction, BetRecommendation)? in
-                validatedKinds.contains(recommendation.kind) && recommendation.strength != .pass ? (prediction, recommendation) : nil
+                validatedKinds.contains(recommendation.kind) && recommendation.strength == .strong ? (prediction, recommendation) : nil
             }
         }
         guard !eligible.isEmpty else { return [] }
@@ -347,7 +350,7 @@ struct BettingView: View {
     private var parlayPlans: [ParlayPlan] {
         let candidates = predictions.flatMap { prediction in
             prediction.bettingRecommendations
-                .filter { $0.strength != .pass }
+                .filter { $0.strength == .strong }
                 .map { recommendation in
                     ParlayLeg(id: "\(prediction.matchup.gameKey)-\(recommendation.id)",
                               matchup: "\(prediction.matchup.away.abbreviation) at \(prediction.matchup.home.abbreviation)",
@@ -499,7 +502,7 @@ struct BettingView: View {
                     if validatedKinds.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Label("No validated bets this week", systemImage: "shield.lefthalf.filled").font(.title3.bold()).foregroundStyle(.orange)
-                            Text("Every market is currently a Pass. A market needs at least 30 held-out strong-edge samples and a 54% win rate before it can become actionable.").foregroundStyle(.secondary)
+                            Text("Every market is currently a Pass. Spreads/totals need 30 strong-edge samples and a 54% win rate; moneylines need 100 samples and at least 3% historical return on stake.").foregroundStyle(.secondary)
                         }.padding(.vertical, 8)
                     }
                     Picker("Market", selection: $filter) {
@@ -528,7 +531,9 @@ struct BettingView: View {
                                     }
                                     Text(displayStrength == .pass ? "Pass on \(recommendation.selection)" : recommendation.selection)
                                     Text(recommendation.rationale).font(.caption).foregroundStyle(.secondary)
-                                    Text("Evidence: \(evidence.graded) strong-edge samples · \(evidence.winRate.formatted(.percent.precision(.fractionLength(1)))) wins")
+                                    Text(recommendation.kind == .moneyline
+                                         ? "Evidence: \(evidence.graded) strong-edge samples · \(evidence.returnOnStake.formatted(.percent.precision(.fractionLength(1)))) return"
+                                         : "Evidence: \(evidence.graded) strong-edge samples · \(evidence.winRate.formatted(.percent.precision(.fractionLength(1)))) wins")
                                         .font(.caption2).foregroundStyle(.tertiary)
                                     HStack {
                                         Text("My wager").font(.caption).foregroundStyle(.secondary)

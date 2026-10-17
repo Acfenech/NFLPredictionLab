@@ -348,7 +348,9 @@ public struct BettingPerformance: Sendable, Hashable {
     public let wins: Int
     public let losses: Int
     public let pushes: Int
+    public let netUnits: Double
     public var winRate: Double { wins + losses == 0 ? 0 : Double(wins) / Double(wins + losses) }
+    public var returnOnStake: Double { graded == 0 ? 0 : netUnits / Double(graded) }
 }
 
 public struct SimulationSummary: Codable, Hashable, Sendable {
@@ -453,6 +455,7 @@ public enum Backtester {
 
     public static func bettingPerformance(_ grades: [GradedPrediction], kind: BetKind? = nil, strongOnly: Bool = false) -> BettingPerformance {
         var wins = 0, losses = 0, pushes = 0
+        var netUnits = 0.0
         for grade in grades {
             let prediction = grade.prediction
             let actualMargin = Double(grade.actualHomeScore - grade.actualAwayScore)
@@ -475,10 +478,22 @@ public enum Backtester {
                     guard grade.actualHomeScore != grade.actualAwayScore else { result = 0; break }
                     result = ((grade.actualHomeScore > grade.actualAwayScore) == choseHome) ? 1 : -1
                 }
-                if result == 1 { wins += 1 } else if result == -1 { losses += 1 } else { pushes += 1 }
+                if result == 1 {
+                    wins += 1
+                    let americanOdds: Int
+                    if recommendation.kind == .moneyline {
+                        let choseHome = recommendation.selection.hasPrefix(prediction.matchup.home.abbreviation + " ")
+                        americanOdds = choseHome ? (prediction.matchup.bettingLine?.homeMoneyline ?? -110)
+                                                  : (prediction.matchup.bettingLine?.awayMoneyline ?? -110)
+                    } else { americanOdds = -110 }
+                    netUnits += (OddsMath.decimal(fromAmerican: americanOdds) ?? 1) - 1
+                } else if result == -1 {
+                    losses += 1; netUnits -= 1
+                } else { pushes += 1 }
             }
         }
-        return BettingPerformance(graded: wins + losses + pushes, wins: wins, losses: losses, pushes: pushes)
+        return BettingPerformance(graded: wins + losses + pushes, wins: wins, losses: losses,
+                                  pushes: pushes, netUnits: netUnits)
     }
 }
 

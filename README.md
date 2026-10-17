@@ -8,7 +8,7 @@ A private SwiftUI prototype with a shared Swift forecasting engine. Open `NFLPre
 
 MVP 1.3 expands training to five completed seasons and replaces in-sample configuration selection with nested walk-forward validation. Candidate home-field, team-rating, recent-form, market-blend, and variance settings are scored only on later seasons, with recent folds weighted more heavily. The newest completed season remains an honest outer holdout for the reported accuracy; after that evaluation is captured, the production configuration and probability calibration are refit on all completed historical games. The selection objective retains the required equal weighting of winner correctness and score accuracy.
 
-Betting validation uses the complete walk-forward grade set rather than only the newest held-out season. Each included season was predicted using earlier seasons only, and the newest season appears exactly once. The existing 30-sample and 54% win-rate requirements remain unchanged.
+Betting validation uses the complete walk-forward grade set rather than only the newest held-out season. Each included season was predicted using earlier seasons only, and the newest season appears exactly once. Spreads and totals require at least 30 strong-edge samples and a 54% win rate. Because moneyline prices have different break-even rates, they require at least 100 samples and a 3% price-adjusted historical return on one-unit stakes.
 
 ## MVP 1.2 parlay planning
 
@@ -28,7 +28,7 @@ MVP 0.9 adds a complete in-app User Guide explaining source provenance, forecast
 
 ## MVP 0.8 betting analysis
 
-MVP 0.8 adds spread, moneyline, and total recommendations with Strong edge, Lean, and Pass classifications. Recommendations require minimum model-versus-market edges, explain their rationale, and are graded historically in the Accuracy screen. A market must also clear a validation gate of at least 30 strong-edge samples and a 54% held-out win rate before the UI can label a wager actionable; otherwise candidate edges are visibly marked Not validated and Pass. They are analytical estimates, not guarantees or financial advice.
+MVP 0.8 adds spread, moneyline, and total recommendations with Strong edge, Lean, and Pass classifications. Recommendations require minimum model-versus-market edges, explain their rationale, and are graded historically in the Accuracy screen. Price-aware validation is applied before the UI can label a wager actionable; otherwise candidate edges are visibly marked Not validated and Pass. They are analytical estimates, not guarantees or financial advice.
 
 The app and cloud worker use nflverse's automatically updated schedule/results release. Team strength combines recency-weighted scoring, defense, and opponent quality, with optional quarterback/injury adjustments. ESPN remains a fallback for the cloud worker. If both sources fail, the app visibly falls back to cached or neutral forecasts. The engine runs 10,000 Monte Carlo trials per matchup and the grading metric weights winner correctness and score accuracy equally.
 
