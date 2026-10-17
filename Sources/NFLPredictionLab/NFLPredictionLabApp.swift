@@ -380,13 +380,15 @@ private struct ParlayPlan: Identifiable {
     func isFundable(showingUnvalidated: Bool) -> Bool { isValidated || (showingUnvalidated && !legs.isEmpty) }
 }
 
-private struct WeeklyBudgetEditor: View {
+private struct SubmittedCurrencyEditor: View {
+    let label: String
     let value: Double
     let onCommit: (Double) -> Void
     @State private var draft: String
     @FocusState private var isFocused: Bool
 
-    init(value: Double, onCommit: @escaping (Double) -> Void) {
+    init(_ label: String, value: Double, onCommit: @escaping (Double) -> Void) {
+        self.label = label
         self.value = value
         self.onCommit = onCommit
         self._draft = State(initialValue: value.formatted(.number.precision(.fractionLength(2))))
@@ -409,10 +411,10 @@ private struct WeeklyBudgetEditor: View {
     var body: some View {
         HStack {
             Text("$")
-            TextField("Weekly amount", text: $draft)
+            TextField(label, text: $draft)
                 .focused($isFocused)
                 .frame(width: 110)
-                .accessibilityLabel("Weekly wager amount")
+                .accessibilityLabel(label)
                 .onSubmit(commit)
             Button("Update", action: commit)
                 .disabled(!hasUncommittedChange)
@@ -447,6 +449,8 @@ struct BettingView: View {
     @State private var showAllPasses = false
     @State private var showUnvalidatedRecommendations = true
     @State private var selectedTab: BettingTab = .plan
+    @State private var showConfiguration = false
+    @State private var expandedAllocationIDs: Set<String> = []
 
     init(predictions: [Prediction], grades: [GradedPrediction], bankroll: BankrollStore) {
         self.predictions = predictions
@@ -582,7 +586,8 @@ struct BettingView: View {
             VStack(spacing: 0) {
                 Picker("Bet Slip section", selection: $selectedTab) {
                     ForEach(BettingTab.allCases, id: \.self) { tab in
-                        Text(tab.rawValue).tag(tab)
+                        Text(tab == .plan ? "Weekly Plan · \(currentAllocations.count)" : tab == .parlays ? "Parlays · \(currentParlayPlans.count)" : "All Markets · \(predictions.count)")
+                            .tag(tab)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -599,7 +604,7 @@ struct BettingView: View {
                         }
                         VStack(alignment: .leading) {
                             Text(currentAllocations.isEmpty ? "—" : "\(weeklyWinCount)–\(currentAllocations.count - weeklyWinCount)").font(.title2.bold()).monospacedDigit()
-                            Text("Predicted record").font(.caption).foregroundStyle(.secondary)
+                            Text("Scenario record").font(.caption).foregroundStyle(.secondary)
                         }
                         VStack(alignment: .leading) {
                             Text(weeklyReturned.formatted(.currency(code: "USD"))).font(.title2.bold()).monospacedDigit()
@@ -618,6 +623,7 @@ struct BettingView: View {
                 }
 
                 Section("Plan configuration") {
+                    DisclosureGroup(isExpanded: $showConfiguration) {
                     HStack {
                         Label("Recommendation mode", systemImage: "scope")
                         Spacer()
@@ -632,17 +638,14 @@ struct BettingView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Bankroll").font(.caption).foregroundStyle(.secondary)
-                            HStack {
-                                Text("$")
-                                TextField("Bankroll", value: $bankroll.bankroll, format: .number.precision(.fractionLength(2)))
-                                    .frame(width: 110)
-                                    .accessibilityLabel("Available bankroll")
+                            SubmittedCurrencyEditor("Available bankroll", value: bankroll.bankroll) { updatedAmount in
+                                bankroll.bankroll = updatedAmount
                             }
                         }
                         Spacer()
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Weekly amount").font(.caption).foregroundStyle(.secondary)
-                            WeeklyBudgetEditor(value: bankroll.weeklyBudget) { updatedAmount in
+                            SubmittedCurrencyEditor("Weekly wager amount", value: bankroll.weeklyBudget) { updatedAmount in
                                 bankroll.weeklyBudget = updatedAmount
                             }
                         }
@@ -686,6 +689,14 @@ struct BettingView: View {
                          ? "Model-ranked · \(riskLabel) risk · \(returnLabel) return. Select Update after changing the weekly amount."
                          : "Validated only · \(riskLabel) risk · \(returnLabel) return. Select Update after changing the weekly amount.")
                         .font(.caption).foregroundStyle(.secondary)
+                    } label: {
+                        HStack {
+                            Text(showUnvalidatedRecommendations ? "Model-ranked" : "Validated only")
+                            Text("· \(riskLabel) · \(returnLabel)").foregroundStyle(.secondary)
+                            Spacer()
+                            Text(bankroll.weeklyBudget.formatted(.currency(code: "USD"))).fontWeight(.semibold).monospacedDigit()
+                        }
+                    }
                 }
 
                 Section(showUnvalidatedRecommendations ? "Model-ranked weekly plan" : "Historically validated weekly plan") {
@@ -705,9 +716,8 @@ struct BettingView: View {
                             let profit = OddsMath.profit(stake: allocation.amount, american: allocation.odds) ?? 0
                             let totalReturn = OddsMath.totalReturn(stake: allocation.amount, american: allocation.odds) ?? 0
                             let predictedToWin = predictedWinnerIDs.contains(allocation.id)
-                            HStack {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(allocation.recommendation.selection).fontWeight(.semibold)
+                            DisclosureGroup(isExpanded: allocationExpandedBinding(allocation.id)) {
+                                VStack(alignment: .leading, spacing: 4) {
                                     Text("\(allocation.matchup) · \(allocation.recommendation.kind.rawValue) · \(allocationValidated ? "Historically validated" : "Model-ranked · unvalidated")")
                                         .font(.caption).foregroundStyle(allocationValidated ? Color.secondary : Color.orange)
                                     Text("\(allocation.odds.formatted(.number.sign(strategy: .always()))) odds · Model chance: \(allocation.modelWinProbability.formatted(.percent.precision(.fractionLength(0)))) win · \((1 - allocation.modelWinProbability).formatted(.percent.precision(.fractionLength(0)))) loss")
@@ -718,10 +728,19 @@ struct BettingView: View {
                                           systemImage: predictedToWin ? "checkmark.circle.fill" : "xmark.circle.fill")
                                         .font(.caption2.bold()).foregroundStyle(predictedToWin ? Color.green : Color.red).monospacedDigit()
                                 }
-                                Spacer()
-                                VStack(alignment: .trailing, spacing: 2) {
-                                    Text(allocation.amount.formatted(.currency(code: "USD"))).font(.headline).monospacedDigit()
-                                    Text("suggested stake").font(.caption2).foregroundStyle(.secondary)
+                                .padding(.top, 4)
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(allocation.recommendation.selection).fontWeight(.semibold)
+                                        Text("\(allocation.odds.formatted(.number.sign(strategy: .always()))) · \(allocation.modelWinProbability.formatted(.percent.precision(.fractionLength(0)))) model chance")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        Text(allocation.amount.formatted(.currency(code: "USD"))).font(.headline).monospacedDigit()
+                                        Text(allocationValidated ? "validated" : "unvalidated").font(.caption2).foregroundStyle(allocationValidated ? Color.green : Color.orange)
+                                    }
                                 }
                             }
                         }
@@ -742,11 +761,11 @@ struct BettingView: View {
                                            value: totalProfit.formatted(.currency(code: "USD")))
                             LabeledContent("Total returned if every bet wins",
                                            value: totalReturned.formatted(.currency(code: "USD")))
-                            LabeledContent("Predicted weekly record",
+                            LabeledContent("Illustrative scenario record",
                                            value: "\(predictedWinCount) wins · \(currentAllocations.count - predictedWinCount) losses")
-                            LabeledContent("Predicted total returned",
+                            LabeledContent("Illustrative scenario return",
                                            value: predictedReturned.formatted(.currency(code: "USD")))
-                            LabeledContent("Predicted weekly net",
+                            LabeledContent("Illustrative scenario net",
                                            value: predictedNet.formatted(.currency(code: "USD").sign(strategy: .always())))
                         }
                         .fontWeight(.semibold)
@@ -910,6 +929,13 @@ struct BettingView: View {
                                     }
                                     HStack {
                                         Text("My wager").font(.caption).foregroundStyle(.secondary)
+                                        if let suggested = currentAllocations.first(where: { $0.id == wagerKey }) {
+                                            Button("Use suggested \(suggested.amount.formatted(.currency(code: "USD")))") {
+                                                bankroll.manualStakes[wagerKey] = suggested.amount
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .font(.caption)
+                                        }
                                         Spacer()
                                         Text("$")
                                         TextField("0.00", value: bankroll.stakeBinding(for: wagerKey), format: .number.precision(.fractionLength(2)))
@@ -934,7 +960,31 @@ struct BettingView: View {
                 }
             }
             .navigationTitle("Bet Slip")
+            .safeAreaInset(edge: .bottom) {
+                HStack(spacing: 18) {
+                    Label("Stake \(weeklyStake.formatted(.currency(code: "USD")))", systemImage: "dollarsign.circle.fill")
+                    Label(currentAllocations.isEmpty ? "Scenario —" : "Scenario \(weeklyWinCount)–\(currentAllocations.count - weeklyWinCount)", systemImage: "chart.bar.fill")
+                    Spacer()
+                    Text("Return \(weeklyReturned.formatted(.currency(code: "USD")))")
+                    Text("Net \(weeklyNet.formatted(.currency(code: "USD").sign(strategy: .always())))")
+                        .foregroundStyle(weeklyNet >= 0 ? Color.green : Color.red)
+                }
+                .font(.callout.weight(.semibold))
+                .monospacedDigit()
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial)
+            }
         }
+    }
+    private func allocationExpandedBinding(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { expandedAllocationIDs.contains(id) },
+            set: { isExpanded in
+                if isExpanded { expandedAllocationIDs.insert(id) }
+                else { expandedAllocationIDs.remove(id) }
+            }
+        )
     }
     private var riskLabel: String { bankroll.riskLevel < 0.34 ? "Conservative" : bankroll.riskLevel < 0.67 ? "Balanced" : "Aggressive" }
     private var returnLabel: String { bankroll.returnLevel < 0.34 ? "Steady" : bankroll.returnLevel < 0.67 ? "Balanced" : "High upside" }
