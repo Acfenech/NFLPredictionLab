@@ -182,6 +182,7 @@ struct UserGuideView: View {
                     GuideItem(icon: "slider.horizontal.2.square", title: "Risk level", detail: "Controls how evenly or aggressively the recommended weekly amount is concentrated among validated edges. It does not change the forecast probabilities.")
                     GuideItem(icon: "arrow.up.right.circle.fill", title: "Return target", detail: "Controls preference for steadier allocations versus higher-upside markets. Higher upside also means greater variance and does not imply better expected results.")
                     GuideItem(icon: "lock.shield.fill", title: "Recommended plan", detail: "Allocates money only when a market passes the historical validation gate. If none qualifies, the recommended amount remains $0 regardless of slider settings.")
+                    GuideItem(icon: "square.stack.3d.up.fill", title: "Three parlay plans", detail: "Lower Variance uses two side/total legs, Balanced uses three diversified edges, and High Upside uses four legs with extra moneyline preference. Games are not repeated inside one parlay, and every leg must be validated before its suggested stake exceeds $0.")
                 }
 
                 Section("Accuracy terms") {
@@ -265,6 +266,23 @@ private struct RecommendedAllocation: Identifiable {
     let amount: Double
 }
 
+private struct ParlayLeg: Identifiable {
+    let id: String
+    let matchup: String
+    let recommendation: BetRecommendation
+    let validated: Bool
+}
+
+private struct ParlayPlan: Identifiable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let risk: String
+    let legs: [ParlayLeg]
+    let budgetShare: Double
+    var isValidated: Bool { !legs.isEmpty && legs.allSatisfy(\.validated) }
+}
+
 struct BettingView: View {
     let predictions: [Prediction]
     let grades: [GradedPrediction]
@@ -298,12 +316,50 @@ struct BettingView: View {
             return strength * concentration * upside
         }
         let totalWeight = weights.reduce(0, +)
-        let available = min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll))
+        let available = min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll)) * (parlayPlans.contains(where: \.isValidated) ? 0.80 : 1.0)
         return zip(eligible, weights).map { pair, weight in
             let (prediction, recommendation) = pair
             let key = "\(prediction.matchup.gameKey)-\(recommendation.id)"
             return RecommendedAllocation(id: key, matchup: "\(prediction.matchup.away.abbreviation) at \(prediction.matchup.home.abbreviation)", recommendation: recommendation, amount: totalWeight > 0 ? available * weight / totalWeight : 0)
         }.sorted { $0.amount > $1.amount }
+    }
+    private var parlayPlans: [ParlayPlan] {
+        let candidates = predictions.flatMap { prediction in
+            prediction.bettingRecommendations
+                .filter { $0.strength != .pass }
+                .map { recommendation in
+                    ParlayLeg(id: "\(prediction.matchup.gameKey)-\(recommendation.id)",
+                              matchup: "\(prediction.matchup.away.abbreviation) at \(prediction.matchup.home.abbreviation)",
+                              recommendation: recommendation,
+                              validated: validatedKinds.contains(recommendation.kind))
+                }
+        }
+        func uniqueGames(_ source: [ParlayLeg], count: Int) -> [ParlayLeg] {
+            var games = Set<String>(), result: [ParlayLeg] = []
+            for leg in source where !games.contains(leg.matchup) {
+                games.insert(leg.matchup); result.append(leg)
+                if result.count == count { break }
+            }
+            return result
+        }
+        let lowerVariance = uniqueGames(candidates
+            .filter { $0.recommendation.kind != .moneyline }
+            .sorted { $0.recommendation.edge > $1.recommendation.edge }, count: 2)
+        let balanced = uniqueGames(candidates.sorted {
+            let lhs = $0.recommendation.edge * ($0.recommendation.kind == .moneyline ? 0.85 : 1)
+            let rhs = $1.recommendation.edge * ($1.recommendation.kind == .moneyline ? 0.85 : 1)
+            return lhs > rhs
+        }, count: 3)
+        let highUpside = uniqueGames(candidates.sorted {
+            let lhs = $0.recommendation.edge * ($0.recommendation.kind == .moneyline ? 1 + bankroll.returnLevel : 1)
+            let rhs = $1.recommendation.edge * ($1.recommendation.kind == .moneyline ? 1 + bankroll.returnLevel : 1)
+            return lhs > rhs
+        }, count: 4)
+        return [
+            ParlayPlan(id: "lower", title: "Lower Variance", subtitle: "Two strongest side/total edges from separate games", risk: "2 legs", legs: lowerVariance, budgetShare: 0.08),
+            ParlayPlan(id: "balanced", title: "Balanced", subtitle: "Three diversified model edges", risk: "3 legs", legs: balanced, budgetShare: 0.07),
+            ParlayPlan(id: "upside", title: "High Upside", subtitle: "Four legs with added moneyline preference", risk: "4 legs", legs: highUpside, budgetShare: 0.05)
+        ]
     }
     var body: some View {
         NavigationStack {
@@ -366,6 +422,50 @@ struct BettingView: View {
                         }
                         LabeledContent("Total recommended", value: allocations.map(\.amount).reduce(0, +).formatted(.currency(code: "USD")))
                     }
+                }
+
+                Section("Three parlay plans") {
+                    ForEach(parlayPlans) { parlay in
+                        let fundedWeeklyAmount = min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll))
+                        let riskMultiplier = parlay.id == "lower" ? 1.25 - bankroll.riskLevel * 0.5 : parlay.id == "upside" ? 0.5 + bankroll.riskLevel : 1.0
+                        let suggestedStake = parlay.isValidated ? fundedWeeklyAmount * parlay.budgetShare * riskMultiplier : 0
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(parlay.title).font(.headline)
+                                    Text(parlay.subtitle).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text(parlay.risk).font(.caption.bold()).padding(.horizontal, 8).padding(.vertical, 4).background(.secondary.opacity(0.12), in: Capsule())
+                            }
+                            ForEach(Array(parlay.legs.enumerated()), id: \.element.id) { index, leg in
+                                HStack(alignment: .top) {
+                                    Text("\(index + 1)").font(.caption.bold()).foregroundStyle(.white).frame(width: 22, height: 22).background(AppTheme.accent, in: Circle())
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(leg.recommendation.selection).fontWeight(.semibold)
+                                        Text("\(leg.matchup) · \(leg.recommendation.rationale)").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: leg.validated ? "checkmark.seal.fill" : "lock.fill").foregroundStyle(leg.validated ? .green : .secondary)
+                                }
+                            }
+                            Divider()
+                            HStack {
+                                Label(parlay.isValidated ? "Validated" : "Preview only · Pass", systemImage: parlay.isValidated ? "checkmark.shield.fill" : "hand.raised.fill")
+                                    .foregroundStyle(parlay.isValidated ? .green : .orange)
+                                Spacer()
+                                Text("Suggested \(suggestedStake.formatted(.currency(code: "USD")))").fontWeight(.semibold).monospacedDigit()
+                            }
+                            HStack {
+                                Text("My parlay wager").font(.caption).foregroundStyle(.secondary)
+                                Spacer(); Text("$")
+                                TextField("0.00", value: bankroll.stakeBinding(for: "parlay-\(parlay.id)"), format: .number.precision(.fractionLength(2)))
+                                    .multilineTextAlignment(.trailing).frame(width: 90)
+                            }
+                        }.padding(.vertical, 5)
+                    }
+                    Text("Parlay legs are selected from different games to reduce direct correlation. Every leg must pass its market validation gate before the app recommends a nonzero stake. Parlays have higher variance than single wagers.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
 
                 Section {
@@ -652,7 +752,7 @@ struct AccuracyView: View {
                         LabeledContent("Balanced score", value: summary.balancedAccuracy.formatted(.percent.precision(.fractionLength(0))))
                     }
                     Section("Benchmark comparison") {
-                        LabeledContent("MVP 1.1 winner accuracy", value: summary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
+                        LabeledContent("MVP 1.2 winner accuracy", value: summary.winnerAccuracy.formatted(.percent.precision(.fractionLength(0))))
                         LabeledContent("Always choose home", value: homeBaseline.formatted(.percent.precision(.fractionLength(0))))
                         if !marketGrades.isEmpty {
                             LabeledContent("Market favorite", value: (Double(marketCorrect) / Double(marketGrades.count)).formatted(.percent.precision(.fractionLength(0))))
@@ -735,7 +835,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Model") {
-                    LabeledContent("Version", value: "MVP 1.1")
+                    LabeledContent("Version", value: "MVP 1.2")
                     LabeledContent("Objective", value: "50% winner · 50% score")
                     LabeledContent("Runs per matchup", value: "10,000")
                     Text("Separate margin and total estimates combine team ratings with consensus market inputs. Confidence is recalibrated from prior seasons; weather, travel, QB and injury context are included when a configured feed supplies them.").font(.footnote).foregroundStyle(.secondary)

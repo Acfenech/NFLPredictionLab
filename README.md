@@ -2,6 +2,10 @@
 
 A private SwiftUI prototype with a shared Swift forecasting engine. Open `NFLPredictionLab.xcodeproj` in Xcode and run the `NFLPredictionLab` scheme on **My Mac** or a connected iPhone.
 
+## MVP 1.2 parlay planning
+
+MVP 1.2 adds three automatically composed parlay plans: a two-leg lower-variance plan, a three-leg balanced plan, and a four-leg high-upside plan. Legs come from different games, respond to the return preference, support manually entered stakes, and require every included market to pass validation before receiving a nonzero recommended stake.
+
 ## MVP 1.1 bankroll planning
 
 MVP 1.1 adds a locally saved bankroll and weekly wager plan, per-market user-entered stake amounts, remaining-budget warnings, and a separate validation-gated recommended allocation. Risk and return-preference sliders change allocation concentration and market weighting; they never bypass the historical validation gate.
