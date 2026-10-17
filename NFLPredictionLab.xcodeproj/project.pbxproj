@@ -12,6 +12,7 @@
 		A10000000000000000000004 /* StatsFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* StatsFeed.swift */; };
 		A10000000000000000000005 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* AppModel.swift */; };
 		A10000000000000000000006 /* NFLPredictionLabApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* NFLPredictionLabApp.swift */; };
+		A10000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,6 +24,7 @@
 		A20000000000000000000006 /* NFLPredictionLabApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NFLPredictionLabApp.swift; sourceTree = "<group>"; };
 		A20000000000000000000007 /* NFLPredictionLab.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NFLPredictionLab.entitlements; sourceTree = SOURCE_ROOT; };
 		A20000000000000000000008 /* NFLPredictionLab.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NFLPredictionLab.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -49,7 +51,7 @@
 		};
 		A40000000000000000000003 /* App */ = {
 			isa = PBXGroup;
-			children = (A20000000000000000000005, A20000000000000000000006);
+			children = (A20000000000000000000005, A20000000000000000000006, A20000000000000000000009);
 			name = App;
 			path = Sources/NFLPredictionLab;
 			sourceTree = SOURCE_ROOT;
@@ -88,7 +90,7 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		A60000000000000000000001 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A60000000000000000000001 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000007); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -98,8 +100,8 @@
 /* Begin XCBuildConfiguration section */
 		B00000000000000000000001 /* Debug project */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; ENABLE_TESTABILITY = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_VERSION = 6.0;}; name = Debug; };
 		B00000000000000000000002 /* Release project */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_VERSION = 6.0;}; name = Release; };
-		B00000000000000000000003 /* Debug target */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = NFLPredictionLab.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = 59T6CY473Z; ENABLE_APP_SANDBOX = YES; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "NFL Prediction Lab"; IPHONEOS_DEPLOYMENT_TARGET = 18.0; MACOSX_DEPLOYMENT_TARGET = 15.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.acfenech.NFLPredictionLab; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = auto; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Debug; };
-		B00000000000000000000004 /* Release target */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = NFLPredictionLab.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = 59T6CY473Z; ENABLE_APP_SANDBOX = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "NFL Prediction Lab"; IPHONEOS_DEPLOYMENT_TARGET = 18.0; MACOSX_DEPLOYMENT_TARGET = 15.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.acfenech.NFLPredictionLab; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = auto; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Release; };
+		B00000000000000000000003 /* Debug target */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = NFLPredictionLab.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = 59T6CY473Z; ENABLE_APP_SANDBOX = YES; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "NFL Prediction Lab"; IPHONEOS_DEPLOYMENT_TARGET = 18.0; MACOSX_DEPLOYMENT_TARGET = 15.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.acfenech.NFLPredictionLab; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = auto; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Debug; };
+		B00000000000000000000004 /* Release target */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = NFLPredictionLab.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = 59T6CY473Z; ENABLE_APP_SANDBOX = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "NFL Prediction Lab"; IPHONEOS_DEPLOYMENT_TARGET = 18.0; MACOSX_DEPLOYMENT_TARGET = 15.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.acfenech.NFLPredictionLab; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = auto; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
