@@ -179,7 +179,7 @@ struct UserGuideView: View {
 
                 Section("Bankroll planner") {
                     GuideItem(icon: "dollarsign.circle.fill", title: "Bankroll", detail: "Enter the amount reserved for betting. It is stored privately on this device and is never transferred or connected to a sportsbook.")
-                    GuideItem(icon: "calendar.badge.clock", title: "Weekly wager amount", detail: "Sets the maximum amount intended for the current week. User-entered wager fields show how much remains and warn when the plan exceeds this amount or the bankroll.")
+                    GuideItem(icon: "calendar.badge.clock", title: "Weekly wager amount", detail: "Use the slider for quick changes or type an exact dollar amount. The slider follows the editable bankroll, while user-entered wager fields show how much remains and warn when the plan exceeds the weekly amount or bankroll.")
                     GuideItem(icon: "slider.horizontal.2.square", title: "Risk level", detail: "Controls how evenly or aggressively the recommended weekly amount is concentrated among validated edges. It does not change the forecast probabilities.")
                     GuideItem(icon: "arrow.up.right.circle.fill", title: "Return target", detail: "Controls preference for steadier allocations versus higher-upside markets. Higher upside also means greater variance and does not imply better expected results.")
                     GuideItem(icon: "arrow.counterclockwise.circle.fill", title: "Reset to Recommended", detail: "Restores the balanced planning defaults: 35% risk and 40% return preference. It does not change the bankroll, weekly amount, wagers, or entered odds.")
@@ -442,14 +442,41 @@ struct BettingView: View {
                 Section("Bankroll & weekly plan") {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("Bankroll").font(.caption).foregroundStyle(.secondary)
-                            HStack { Text("$"); TextField("Bankroll", value: $bankroll.bankroll, format: .number.precision(.fractionLength(2))).frame(maxWidth: 140) }
+                            Text("Available bankroll").font(.caption).foregroundStyle(.secondary)
+                            HStack {
+                                Text("$")
+                                TextField("Bankroll", value: $bankroll.bankroll, format: .number.precision(.fractionLength(2)))
+                                    .frame(maxWidth: 140)
+                                    .accessibilityLabel("Available bankroll")
+                            }
                         }
                         Spacer()
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Weekly wager amount").font(.caption).foregroundStyle(.secondary)
-                            HStack { Text("$"); TextField("Weekly amount", value: $bankroll.weeklyBudget, format: .number.precision(.fractionLength(2))).frame(maxWidth: 140) }
+                            HStack {
+                                Text("$")
+                                TextField("Weekly amount", value: $bankroll.weeklyBudget, format: .number.precision(.fractionLength(2)))
+                                    .frame(maxWidth: 140)
+                                    .accessibilityLabel("Weekly wager amount")
+                            }
                         }
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Weekly wager slider").fontWeight(.semibold)
+                            Spacer()
+                            Text(bankroll.weeklyBudget.formatted(.currency(code: "USD")))
+                                .fontWeight(.semibold).monospacedDigit()
+                        }
+                        Slider(value: weeklyBudgetSlider, in: 0...weeklySliderMaximum, step: weeklySliderStep) {
+                            Text("Weekly wager amount")
+                        } minimumValueLabel: {
+                            Text("$0")
+                        } maximumValueLabel: {
+                            Text(weeklySliderMaximum.formatted(.currency(code: "USD").precision(.fractionLength(0))))
+                        }
+                        Text("Adjusts the total amount distributed across this week’s eligible wagers. You can also type an exact amount above.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                     HStack {
                         LabeledContent("User-entered wagers", value: bankroll.manualTotal.formatted(.currency(code: "USD")))
@@ -711,6 +738,14 @@ struct BettingView: View {
                 }
             }.navigationTitle("Betting Analysis")
         }
+    }
+    private var weeklySliderMaximum: Double { max(1, bankroll.bankroll) }
+    private var weeklySliderStep: Double { weeklySliderMaximum < 100 ? 1 : 5 }
+    private var weeklyBudgetSlider: Binding<Double> {
+        Binding(
+            get: { min(max(0, bankroll.weeklyBudget), weeklySliderMaximum) },
+            set: { bankroll.weeklyBudget = min(max(0, $0), weeklySliderMaximum) }
+        )
     }
     private var riskLabel: String { bankroll.riskLevel < 0.34 ? "Conservative" : bankroll.riskLevel < 0.67 ? "Balanced" : "Aggressive" }
     private var returnLabel: String { bankroll.returnLevel < 0.34 ? "Steady" : bankroll.returnLevel < 0.67 ? "Balanced" : "High upside" }
