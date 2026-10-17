@@ -233,6 +233,12 @@ public struct TheOddsAPIPlayerPropsFeed: Sendable {
     public init(apiKey: String) { self.apiKey = apiKey }
 
     public func quotes(for matchups: [Matchup]) async throws -> [String: [PlayerPropQuote]] {
+        try await fetchReport(for: matchups).quotesByGame
+    }
+
+    /// Fetches every event independently. A missing or unsupported prop market for one
+    /// game no longer discards good quotes from the rest of the week.
+    public func fetchReport(for matchups: [Matchup]) async throws -> PlayerPropsFetchReport {
         var eventComponents = URLComponents(string: "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/events")!
         eventComponents.queryItems = [URLQueryItem(name: "apiKey", value: apiKey)]
         let (eventData, eventResponse) = try await URLSession.shared.data(for: .nflStatsRequest(url: eventComponents.url!))
@@ -242,11 +248,40 @@ public struct TheOddsAPIPlayerPropsFeed: Sendable {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let events = try decoder.decode([Event].self, from: eventData)
-        var result: [String: [PlayerPropQuote]] = [:]
+        var requests: [(Matchup, Event)] = []
+        var diagnostics: [String] = []
         for matchup in matchups {
             let homeName = TheOddsAPIMoneylineFeed.teamNames[matchup.home.abbreviation] ?? matchup.home.name
             let awayName = TheOddsAPIMoneylineFeed.teamNames[matchup.away.abbreviation] ?? matchup.away.name
-            guard let event = events.first(where: { $0.homeTeam == homeName && $0.awayTeam == awayName }) else { continue }
+            guard let event = events.first(where: { $0.homeTeam == homeName && $0.awayTeam == awayName }) else {
+                diagnostics.append("\(matchup.gameKey): no matching event returned by The Odds API")
+                continue
+            }
+            requests.append((matchup, event))
+        }
+
+        let apiKey = self.apiKey
+        let results = await withTaskGroup(of: EventRequestResult.self, returning: [EventRequestResult].self) { group in
+            for (matchup, event) in requests {
+                group.addTask {
+                    await Self.fetchEvent(matchup: matchup, event: event, apiKey: apiKey)
+                }
+            }
+            var values: [EventRequestResult] = []
+            for await value in group { values.append(value) }
+            return values
+        }
+
+        var quotesByGame: [String: [PlayerPropQuote]] = [:]
+        for result in results.sorted(by: { $0.gameKey < $1.gameKey }) {
+            if let quotes = result.quotes, !quotes.isEmpty { quotesByGame[result.gameKey] = quotes }
+            diagnostics.append(result.diagnostic)
+        }
+        return PlayerPropsFetchReport(quotesByGame: quotesByGame, diagnostics: diagnostics)
+    }
+
+    private static func fetchEvent(matchup: Matchup, event: Event, apiKey: String) async -> EventRequestResult {
+        do {
             var components = URLComponents(string: "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/events/\(event.id)/odds")!
             components.queryItems = [
                 URLQueryItem(name: "apiKey", value: apiKey), URLQueryItem(name: "regions", value: "us"),
@@ -255,12 +290,22 @@ public struct TheOddsAPIPlayerPropsFeed: Sendable {
             ]
             let (data, response) = try await URLSession.shared.data(for: .nflStatsRequest(url: components.url!))
             if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-                throw StatsFeedError.httpStatus(http.statusCode, String(decoding: data.prefix(300), as: UTF8.self))
+                let body = String(decoding: data.prefix(500), as: UTF8.self)
+                let remaining = http.value(forHTTPHeaderField: "x-requests-remaining") ?? "unknown"
+                return EventRequestResult(gameKey: matchup.gameKey, quotes: nil,
+                    diagnostic: "\(matchup.gameKey): HTTP \(http.statusCode), quota remaining \(remaining), response \(body)")
             }
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
             let detail = try decoder.decode(EventDetail.self, from: data)
-            result[matchup.gameKey] = Self.consensusQuotes(from: detail)
+            let quotes = Self.consensusQuotes(from: detail)
+            let remaining = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "x-requests-remaining") ?? "unknown"
+            return EventRequestResult(gameKey: matchup.gameKey, quotes: quotes,
+                diagnostic: "\(matchup.gameKey): \(quotes.count) quotes, \(detail.bookmakers.count) books, quota remaining \(remaining)")
+        } catch {
+            return EventRequestResult(gameKey: matchup.gameKey, quotes: nil,
+                diagnostic: "\(matchup.gameKey): request failed: \(error)")
         }
-        return result
     }
 
     private static func consensusQuotes(from event: EventDetail) -> [PlayerPropQuote] {
@@ -294,7 +339,12 @@ public struct TheOddsAPIPlayerPropsFeed: Sendable {
         return sorted.count.isMultiple(of: 2) ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
     }
 
-    private struct Event: Decodable {
+    private struct EventRequestResult: Sendable {
+        let gameKey: String
+        let quotes: [PlayerPropQuote]?
+        let diagnostic: String
+    }
+    private struct Event: Decodable, Sendable {
         let id: String; let homeTeam: String; let awayTeam: String
         enum CodingKeys: String, CodingKey { case id, homeTeam = "home_team", awayTeam = "away_team" }
     }
@@ -309,6 +359,15 @@ public struct TheOddsAPIPlayerPropsFeed: Sendable {
         "player_pass_yds": "Passing yards", "player_rush_yds": "Rushing yards",
         "player_reception_yds": "Receiving yards", "player_receptions": "Receptions"
     ]
+}
+
+public struct PlayerPropsFetchReport: Sendable {
+    public let quotesByGame: [String: [PlayerPropQuote]]
+    public let diagnostics: [String]
+    public init(quotesByGame: [String: [PlayerPropQuote]], diagnostics: [String]) {
+        self.quotesByGame = quotesByGame
+        self.diagnostics = diagnostics
+    }
 }
 
 /// Lightweight, no-key baseline feed using ESPN's public scoreboard endpoint.

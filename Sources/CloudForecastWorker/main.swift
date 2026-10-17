@@ -203,9 +203,11 @@ var playerPropsByGame: [String: [PlayerPropQuote]] = [:]
 if environment["FETCH_PLAYER_PROPS"] == "true",
    let apiKey = environment["THE_ODDS_API_KEY"], !apiKey.isEmpty {
     do {
-        playerPropsByGame = try await TheOddsAPIPlayerPropsFeed(apiKey: apiKey).quotes(for: matchups)
+        let report = try await TheOddsAPIPlayerPropsFeed(apiKey: apiKey).fetchReport(for: matchups)
+        playerPropsByGame = report.quotesByGame
+        for diagnostic in report.diagnostics { print("Player props: \(diagnostic)") }
         let quoteCount = playerPropsByGame.values.reduce(0) { $0 + $1.count }
-        source += " + The Odds API player props"
+        if quoteCount > 0 { source += " + The Odds API player props" }
         print("Loaded \(quoteCount) player-prop consensus quotes for \(playerPropsByGame.count) games")
     } catch {
         print("Player props unavailable (\(error)); continuing without player-prop markets")
