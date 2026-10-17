@@ -184,7 +184,7 @@ struct UserGuideView: View {
                     GuideItem(icon: "arrow.up.right.circle.fill", title: "Return target", detail: "Controls preference for steadier allocations versus higher-upside markets. Higher upside also means greater variance and does not imply better expected results.")
                     GuideItem(icon: "arrow.counterclockwise.circle.fill", title: "Reset to Recommended", detail: "Restores the balanced planning defaults: 35% risk and 40% return preference. It does not change the bankroll, weekly amount, wagers, or entered odds.")
                     GuideItem(icon: "lock.shield.fill", title: "Recommended plan", detail: "Allocates money only when a market passes the historical validation gate. If none qualifies, the recommended amount remains $0 regardless of slider settings.")
-                    GuideItem(icon: "eye.trianglebadge.exclamationmark", title: "Unvalidated recommendations", detail: "The Betting screen toggle can reveal a separate speculative plan from strong model edges that failed validation. These entries remain orange and explicitly marked Unvalidated; enabling the toggle does not improve their historical performance.")
+                    GuideItem(icon: "eye.trianglebadge.exclamationmark", title: "Unvalidated recommendations", detail: "The Betting screen toggle reveals speculative single bets and all three parlay plans from strong model edges that failed validation. They can receive suggested stakes from the weekly amount, remain orange and explicitly marked Unvalidated, and do not gain historical credibility when enabled.")
                     GuideItem(icon: "square.stack.3d.up.fill", title: "Three parlay plans", detail: "Lower Variance uses two side/total legs, Balanced uses three diversified edges, and High Upside uses four legs with extra moneyline preference. Games are not repeated inside one parlay. Suggested stakes require validation unless you explicitly enable speculative recommendations.")
                     GuideItem(icon: "equal.square.fill", title: "Odds and returns", detail: "Each suggested bet shows its profit and total returned if it wins. Profit excludes the returned stake; total returned includes it. Enter the exact American odds shown by your sportsbook before placing a wager because every displayed return changes with the price.")
                 }
@@ -431,10 +431,10 @@ struct BettingView: View {
                     }
                     .fontWeight(.semibold)
                     if showUnvalidatedRecommendations {
-                        Label("Speculative mode is on. These candidates failed historical validation and have a higher demonstrated risk of loss.", systemImage: "exclamationmark.triangle.fill")
+                        Label("Speculative mode is on for single bets and parlays. These candidates failed historical validation and have a higher demonstrated risk of loss.", systemImage: "exclamationmark.triangle.fill")
                             .font(.callout).foregroundStyle(.orange)
                     } else {
-                        Text("Off · only historically validated markets can receive suggested amounts.")
+                        Text("Off · only historically validated single bets and parlays can receive suggested amounts.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -579,7 +579,7 @@ struct BettingView: View {
                     }
                 }
 
-                Section("Three parlay plans") {
+                Section(showUnvalidatedRecommendations ? "Three speculative parlay plans" : "Three parlay plans") {
                     ForEach(parlayPlans) { parlay in
                         let fundedWeeklyAmount = min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll))
                         let riskMultiplier = parlay.id == "lower" ? 1.25 - bankroll.riskLevel * 0.5 : parlay.id == "upside" ? 0.5 + bankroll.riskLevel : 1.0
