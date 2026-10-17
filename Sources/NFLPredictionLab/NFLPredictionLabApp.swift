@@ -253,6 +253,7 @@ struct UserGuideView: View {
                     GuideItem(icon: "lock.shield.fill", title: "Validated recommendations", detail: "Allocates money only when a market passes its historical sample and performance gate. If none qualifies, the validated recommendation remains $0 regardless of strategy settings.")
                     GuideItem(icon: "eye.trianglebadge.exclamationmark", title: "Model-ranked recommendations", detail: "The Bet Slip segmented control reveals this week’s strongest model edges even when they failed historical validation. They can receive suggested stakes, remain orange and explicitly marked Unvalidated, and do not gain credibility merely because this mode is enabled.")
                     GuideItem(icon: "square.stack.3d.up.fill", title: "Three parlay plans", detail: "Lower Variance uses two side/total legs, Balanced uses three diversified edges, and High Upside uses four legs with extra moneyline preference. Games are not repeated inside one parlay. Suggested stakes require validation unless you explicitly enable speculative recommendations.")
+                    GuideItem(icon: "person.crop.circle.badge.plus", title: "Player parlay builder", detail: "Enter player-prop selections and the exact American odds from your sportsbook to calculate combined odds and returns. The current free nflverse feed does not provide live player-prop markets, so these entries are payout calculations rather than model-validated recommendations.")
                     GuideItem(icon: "equal.square.fill", title: "Odds and returns", detail: "Every wager settles in one of two ways: a win returns the full stake plus profit, while a loss returns $0. The weekly outlook rounds the combined win probabilities to a projected win count, assigns those wins to the highest-probability selections, and totals their full returns. It is a scenario forecast, not a guarantee. Enter the exact American odds shown by your sportsbook because every displayed return changes with the price.")
                 }
 
@@ -380,6 +381,13 @@ private struct ParlayPlan: Identifiable {
     func isFundable(showingUnvalidated: Bool) -> Bool { isValidated || (showingUnvalidated && !legs.isEmpty) }
 }
 
+private struct ManualPlayerPropLeg: Identifiable, Hashable {
+    let id = UUID()
+    let player: String
+    let selection: String
+    let odds: Int
+}
+
 private struct SubmittedCurrencyEditor: View {
     let label: String
     let value: Double
@@ -451,6 +459,10 @@ struct BettingView: View {
     @State private var selectedTab: BettingTab = .plan
     @State private var showConfiguration = false
     @State private var expandedAllocationIDs: Set<String> = []
+    @State private var playerName = ""
+    @State private var playerPropSelection = ""
+    @State private var playerPropOdds = -110
+    @State private var playerPropLegs: [ManualPlayerPropLeg] = []
 
     init(predictions: [Prediction], grades: [GradedPrediction], bankroll: BankrollStore) {
         self.predictions = predictions
@@ -586,7 +598,7 @@ struct BettingView: View {
             VStack(spacing: 0) {
                 Picker("Bet Slip section", selection: $selectedTab) {
                     ForEach(BettingTab.allCases, id: \.self) { tab in
-                        Text(tab == .plan ? "Weekly Plan · \(currentAllocations.count)" : tab == .parlays ? "Parlays · \(currentParlayPlans.count)" : "All Markets · \(predictions.count)")
+                        Text(tab == .plan ? "Weekly Plan · \(currentAllocations.count)" : tab == .parlays ? "Parlays · \(currentParlayPlans.count + (playerPropLegs.count >= 2 ? 1 : 0))" : "All Markets · \(predictions.count)")
                             .tag(tab)
                     }
                 }
@@ -880,6 +892,66 @@ struct BettingView: View {
                          ? "Speculative parlay amounts are visible by your choice even though the legs failed validation. Parlays compound estimation error and have substantially higher variance."
                          : "Parlay legs are selected from different games to reduce direct correlation. Every leg must pass its market validation gate before the app recommends a nonzero stake. Parlays have higher variance than single wagers.")
                         .font(.caption).foregroundStyle(.secondary)
+                }
+
+                Section("Player parlay builder") {
+                    Label("Enter the exact player props and American odds shown by your sportsbook. Live player-prop lines are not included in the current nflverse feed.", systemImage: "person.crop.circle.badge.plus")
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        TextField("Player", text: $playerName).frame(minWidth: 120)
+                        TextField("Selection, e.g. Over 74.5 receiving yards", text: $playerPropSelection).frame(minWidth: 260)
+                        TextField("Odds", value: $playerPropOdds, format: .number.sign(strategy: .always())).frame(width: 80)
+                        Button("Add Leg") {
+                            playerPropLegs.append(ManualPlayerPropLeg(
+                                player: playerName.trimmingCharacters(in: .whitespacesAndNewlines),
+                                selection: playerPropSelection.trimmingCharacters(in: .whitespacesAndNewlines),
+                                odds: playerPropOdds
+                            ))
+                            playerName = ""
+                            playerPropSelection = ""
+                            playerPropOdds = -110
+                        }
+                        .disabled(playerName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                  playerPropSelection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                  playerPropOdds == 0)
+                    }
+                    ForEach(playerPropLegs) { leg in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(leg.player).fontWeight(.semibold)
+                                Text(leg.selection).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(leg.odds.formatted(.number.sign(strategy: .always()))).monospacedDigit()
+                            Button(role: .destructive) {
+                                playerPropLegs.removeAll { $0.id == leg.id }
+                            } label: {
+                                Image(systemName: "trash")
+                            }.buttonStyle(.borderless)
+                        }
+                    }
+                    if playerPropLegs.count >= 2 {
+                        let calculatedOdds = OddsMath.parlayAmerican(playerPropLegs.map(\.odds)) ?? 100
+                        let wagerKey = "player-prop-parlay"
+                        let enteredStake = bankroll.manualStakes[wagerKey] ?? 0
+                        OddsReturnRow(
+                            odds: bankroll.oddsBinding(for: wagerKey, default: calculatedOdds),
+                            stake: enteredStake,
+                            source: "Calculated from entered legs · replace with the exact combined bet365 price"
+                        )
+                        HStack {
+                            Text("My player parlay wager").font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            Text("$")
+                            TextField("0.00", value: bankroll.stakeBinding(for: wagerKey), format: .number.precision(.fractionLength(2)))
+                                .multilineTextAlignment(.trailing).frame(width: 90)
+                        }
+                        Text("All legs must win for the parlay to return a profit. The app is calculating payout only; it is not validating or recommending these player props.")
+                            .font(.caption).foregroundStyle(.orange)
+                    } else {
+                        Text("Add at least two player-prop legs to calculate combined odds and returns.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 }
 
