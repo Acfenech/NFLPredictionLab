@@ -1,11 +1,24 @@
 import SwiftUI
 import Charts
+#if os(macOS)
+import AppKit
+#endif
 #if canImport(PredictionCore)
 import PredictionCore
 #endif
 
 @main
 struct NFLPredictionLabApp: App {
+    init() {
+#if os(macOS)
+        if let url = Bundle.module.url(forResource: "AppIcon-512", withExtension: "png",
+                                       subdirectory: "Assets.xcassets/AppIcon.appiconset"),
+           let icon = NSImage(contentsOf: url) {
+            NSApplication.shared.applicationIconImage = icon
+        }
+#endif
+    }
+
     var body: some Scene {
         WindowGroup { DashboardView() }
     }

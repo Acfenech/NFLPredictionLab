@@ -11,7 +11,11 @@ let package = Package(
     ],
     targets: [
         .target(name: "PredictionCore"),
-        .executableTarget(name: "NFLPredictionLab", dependencies: ["PredictionCore"]),
+        .executableTarget(
+            name: "NFLPredictionLab",
+            dependencies: ["PredictionCore"],
+            resources: [.copy("Assets.xcassets")]
+        ),
         .executableTarget(name: "CloudForecastWorker", dependencies: ["PredictionCore"]),
         .testTarget(name: "PredictionCoreTests", dependencies: ["PredictionCore"])
     ]
