@@ -63,6 +63,7 @@ jobs:
           AVAILABILITY_FEED_URL: ${{ vars.AVAILABILITY_FEED_URL }}
           ADVANCED_METRICS_FEED_URL: ${{ vars.ADVANCED_METRICS_FEED_URL }}
           GAME_CONTEXT_FEED_URL: ${{ vars.GAME_CONTEXT_FEED_URL }}
+          THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
         run: swift run CloudForecastWorker
 
       - name: Archive forecast artifact

@@ -1,5 +1,7 @@
 # NFL Prediction Lab MVP
 
+The betting screen calculates implied probability, potential profit, and total return from editable American odds for every single and parlay. nflverse remains the no-key spread/total and baseline moneyline source. When the optional `THE_ODDS_API_KEY` environment variable is present, the scheduled worker overlays the median available US-book NFL moneyline and preserves it through CloudKit sync. The key belongs in the GitHub Actions secret named `THE_ODDS_API_KEY`; it must not be committed to the repository. Exact sportsbook odds should still be entered before placing a wager.
+
 A private SwiftUI prototype with a shared Swift forecasting engine. Open `NFLPredictionLab.xcodeproj` in Xcode and run the `NFLPredictionLab` scheme on **My Mac** or a connected iPhone.
 
 ## MVP 1.2 parlay planning

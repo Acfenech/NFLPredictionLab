@@ -1,6 +1,13 @@
 import Testing
 @testable import PredictionCore
 
+@Test func americanOddsCalculateProfitReturnAndParlay() {
+    #expect(OddsMath.profit(stake: 100, american: 150) == 150)
+    #expect(abs((OddsMath.totalReturn(stake: 100, american: -110) ?? 0) - 190.909) < 0.01)
+    #expect(abs((OddsMath.impliedProbability(american: -110) ?? 0) - 0.5238) < 0.001)
+    #expect(OddsMath.parlayAmerican([-110, -110]) == 264)
+}
+
 @Test func strongerHomeTeamIsFavored() {
     let weak = Team(abbreviation: "W", name: "Weak", offensiveRating: -5, defensiveRating: -5)
     let strong = Team(abbreviation: "S", name: "Strong", offensiveRating: 5, defensiveRating: 5)

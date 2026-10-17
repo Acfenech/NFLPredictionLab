@@ -102,6 +102,37 @@ public struct BettingLine: Codable, Hashable, Sendable {
     }
 }
 
+public enum OddsMath {
+    public static func decimal(fromAmerican odds: Int) -> Double? {
+        guard odds != 0 else { return nil }
+        return odds > 0 ? 1 + Double(odds) / 100 : 1 + 100 / Double(abs(odds))
+    }
+
+    public static func american(fromDecimal odds: Double) -> Int? {
+        guard odds > 1 else { return nil }
+        return odds >= 2 ? Int(((odds - 1) * 100).rounded()) : -Int((100 / (odds - 1)).rounded())
+    }
+
+    public static func impliedProbability(american odds: Int) -> Double? {
+        decimal(fromAmerican: odds).map { 1 / $0 }
+    }
+
+    public static func profit(stake: Double, american odds: Int) -> Double? {
+        decimal(fromAmerican: odds).map { max(0, stake) * ($0 - 1) }
+    }
+
+    public static func totalReturn(stake: Double, american odds: Int) -> Double? {
+        decimal(fromAmerican: odds).map { max(0, stake) * $0 }
+    }
+
+    public static func parlayAmerican(_ legs: [Int]) -> Int? {
+        guard !legs.isEmpty else { return nil }
+        let decimals = legs.compactMap(decimal(fromAmerican:))
+        guard decimals.count == legs.count else { return nil }
+        return american(fromDecimal: decimals.reduce(1, *))
+    }
+}
+
 public struct GameContext: Codable, Hashable, Sendable {
     public let weatherSummary: String?
     public let weatherPoints: Double

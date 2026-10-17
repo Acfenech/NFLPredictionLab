@@ -179,6 +179,26 @@ do {
 guard !matchups.isEmpty else {
     throw StatsFeedError.missingFields("upcoming games for week \(week) of \(season)")
 }
+if let apiKey = environment["THE_ODDS_API_KEY"], !apiKey.isEmpty {
+    do {
+        let quotes = try await TheOddsAPIMoneylineFeed(apiKey: apiKey).quotes(for: matchups)
+        matchups = matchups.map { matchup in
+            guard let quote = quotes[matchup.gameKey] else { return matchup }
+            let base = matchup.bettingLine
+            let line = BettingLine(homeSpread: base?.homeSpread, total: base?.total,
+                homeMoneyline: quote.homeMoneyline, awayMoneyline: quote.awayMoneyline,
+                source: "The Odds API median (\(quote.bookmakers) books) + nflverse consensus",
+                openingHomeSpread: base?.openingHomeSpread, openingTotal: base?.openingTotal,
+                closingHomeSpread: base?.closingHomeSpread, closingTotal: base?.closingTotal)
+            return Matchup(id: matchup.id, week: matchup.week, kickoff: matchup.kickoff,
+                away: matchup.away, home: matchup.home, bettingLine: line, context: matchup.context)
+        }
+        source += " + The Odds API moneylines"
+        print("Loaded current moneyline consensus for \(quotes.count) games")
+    } catch {
+        print("The Odds API unavailable (\(error)); continuing with nflverse consensus")
+    }
+}
 let historical = (try? await NFLVerseScheduleFeed().historicalGames(seasons: (season - 3)...(season - 1))) ?? []
 let validationReport = ModelTrainer.trainAndValidate(historical)
 let engine = ForecastingEngine(configuration: validationReport?.configuration ?? .baseline)

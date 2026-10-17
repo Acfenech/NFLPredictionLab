@@ -157,6 +157,7 @@ struct UserGuideView: View {
                     GuideItem(icon: "cloud.sun.fill", title: "Open-Meteo", detail: "Forecast temperature, wind and precipitation near the stadium at kickoff. Weather may affect scoring and passing efficiency; forecasts can change as kickoff approaches.")
                     GuideItem(icon: "location.fill", title: "Stadium and travel data", detail: "Bundled stadium coordinates are used to estimate the away team’s travel distance. This is context, not live tracking.")
                     GuideItem(icon: "chart.line.uptrend.xyaxis", title: "Market consensus", detail: "Available spread, total and moneyline fields from nflverse are comparison inputs. They may lag a sportsbook and are not guaranteed to be the current or closing price.")
+                    GuideItem(icon: "dollarsign.arrow.circlepath", title: "Optional current moneylines", detail: "When the scheduled worker has a The Odds API key, the app overlays the median available US-book moneyline. This is a general comparison price, not a guaranteed bet365 quote.")
                     GuideItem(icon: "icloud.fill", title: "CloudKit and GitHub Actions", detail: "CloudKit synchronizes forecast bundles and history across signed-in Apple devices. Scheduled GitHub Actions performs unattended calculations because CloudKit does not run background forecasting jobs.")
                 }
 
@@ -183,6 +184,7 @@ struct UserGuideView: View {
                     GuideItem(icon: "arrow.up.right.circle.fill", title: "Return target", detail: "Controls preference for steadier allocations versus higher-upside markets. Higher upside also means greater variance and does not imply better expected results.")
                     GuideItem(icon: "lock.shield.fill", title: "Recommended plan", detail: "Allocates money only when a market passes the historical validation gate. If none qualifies, the recommended amount remains $0 regardless of slider settings.")
                     GuideItem(icon: "square.stack.3d.up.fill", title: "Three parlay plans", detail: "Lower Variance uses two side/total legs, Balanced uses three diversified edges, and High Upside uses four legs with extra moneyline preference. Games are not repeated inside one parlay, and every leg must be validated before its suggested stake exceeds $0.")
+                    GuideItem(icon: "equal.square.fill", title: "Odds and returns", detail: "Enter the exact American odds shown by your sportsbook before placing a wager. Potential profit excludes the returned stake; total return includes it. Displayed returns are mathematical estimates and change when the price changes.")
                 }
 
                 Section("Accuracy terms") {
@@ -233,16 +235,22 @@ final class BankrollStore: ObservableObject {
     @Published var riskLevel: Double { didSet { save() } }
     @Published var returnLevel: Double { didSet { save() } }
     @Published var manualStakes: [String: Double] { didSet { save() } }
+    @Published var enteredOdds: [String: Int] { didSet { save() } }
 
     private static let key = "bankrollPlanner.v1"
-    private struct Snapshot: Codable { let bankroll, weeklyBudget, riskLevel, returnLevel: Double; let manualStakes: [String: Double] }
+    private struct Snapshot: Codable {
+        let bankroll, weeklyBudget, riskLevel, returnLevel: Double
+        let manualStakes: [String: Double]
+        let enteredOdds: [String: Int]?
+    }
 
     init() {
         if let data = UserDefaults.standard.data(forKey: Self.key), let saved = try? JSONDecoder().decode(Snapshot.self, from: data) {
             bankroll = saved.bankroll; weeklyBudget = saved.weeklyBudget
             riskLevel = saved.riskLevel; returnLevel = saved.returnLevel; manualStakes = saved.manualStakes
+            enteredOdds = saved.enteredOdds ?? [:]
         } else {
-            bankroll = 1_000; weeklyBudget = 50; riskLevel = 0.35; returnLevel = 0.40; manualStakes = [:]
+            bankroll = 1_000; weeklyBudget = 50; riskLevel = 0.35; returnLevel = 0.40; manualStakes = [:]; enteredOdds = [:]
         }
     }
 
@@ -252,9 +260,15 @@ final class BankrollStore: ObservableObject {
             self.manualStakes[key] = max(0, value)
         })
     }
+    func odds(for key: String, default fallback: Int) -> Int { enteredOdds[key] ?? fallback }
+    func oddsBinding(for key: String, default fallback: Int) -> Binding<Int> {
+        Binding(get: { self.enteredOdds[key] ?? fallback }, set: { value in
+            if value != 0 { self.enteredOdds[key] = value }
+        })
+    }
     func clearWeeklyWagers() { manualStakes = [:] }
     private func save() {
-        let snapshot = Snapshot(bankroll: max(0, bankroll), weeklyBudget: max(0, weeklyBudget), riskLevel: riskLevel, returnLevel: returnLevel, manualStakes: manualStakes)
+        let snapshot = Snapshot(bankroll: max(0, bankroll), weeklyBudget: max(0, weeklyBudget), riskLevel: riskLevel, returnLevel: returnLevel, manualStakes: manualStakes, enteredOdds: enteredOdds)
         if let data = try? JSONEncoder().encode(snapshot) { UserDefaults.standard.set(data, forKey: Self.key) }
     }
 }
@@ -271,6 +285,7 @@ private struct ParlayLeg: Identifiable {
     let matchup: String
     let recommendation: BetRecommendation
     let validated: Bool
+    let odds: Int
 }
 
 private struct ParlayPlan: Identifiable {
@@ -289,6 +304,11 @@ struct BettingView: View {
     @StateObject private var bankroll = BankrollStore()
     @State private var filter = "All"
     @State private var showAllPasses = false
+    private func defaultOdds(for recommendation: BetRecommendation, prediction: Prediction) -> Int {
+        guard recommendation.kind == .moneyline, let line = prediction.matchup.bettingLine else { return -110 }
+        return recommendation.selection.hasPrefix(prediction.matchup.home.abbreviation)
+            ? (line.homeMoneyline ?? -110) : (line.awayMoneyline ?? -110)
+    }
     private var validatedKinds: Set<BetKind> {
         Set([BetKind.spread, .total, .moneyline].filter { kind in
             let performance = Backtester.bettingPerformance(grades, kind: kind, strongOnly: true)
@@ -331,7 +351,8 @@ struct BettingView: View {
                     ParlayLeg(id: "\(prediction.matchup.gameKey)-\(recommendation.id)",
                               matchup: "\(prediction.matchup.away.abbreviation) at \(prediction.matchup.home.abbreviation)",
                               recommendation: recommendation,
-                              validated: validatedKinds.contains(recommendation.kind))
+                              validated: validatedKinds.contains(recommendation.kind),
+                              odds: defaultOdds(for: recommendation, prediction: prediction))
                 }
         }
         func uniqueGames(_ source: [ParlayLeg], count: Int) -> [ParlayLeg] {
@@ -429,6 +450,9 @@ struct BettingView: View {
                         let fundedWeeklyAmount = min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll))
                         let riskMultiplier = parlay.id == "lower" ? 1.25 - bankroll.riskLevel * 0.5 : parlay.id == "upside" ? 0.5 + bankroll.riskLevel : 1.0
                         let suggestedStake = parlay.isValidated ? fundedWeeklyAmount * parlay.budgetShare * riskMultiplier : 0
+                        let parlayKey = "parlay-\(parlay.id)"
+                        let calculatedOdds = OddsMath.parlayAmerican(parlay.legs.map(\.odds)) ?? 100
+                        let enteredStake = bankroll.manualStakes[parlayKey] ?? 0
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -459,9 +483,11 @@ struct BettingView: View {
                             HStack {
                                 Text("My parlay wager").font(.caption).foregroundStyle(.secondary)
                                 Spacer(); Text("$")
-                                TextField("0.00", value: bankroll.stakeBinding(for: "parlay-\(parlay.id)"), format: .number.precision(.fractionLength(2)))
+                                TextField("0.00", value: bankroll.stakeBinding(for: parlayKey), format: .number.precision(.fractionLength(2)))
                                     .multilineTextAlignment(.trailing).frame(width: 90)
                             }
+                            OddsReturnRow(odds: bankroll.oddsBinding(for: parlayKey, default: calculatedOdds),
+                                          stake: enteredStake, source: "Calculated leg price · replace with bet365 combined odds")
                         }.padding(.vertical, 5)
                     }
                     Text("Parlay legs are selected from different games to reduce direct correlation. Every leg must pass its market validation gate before the app recommends a nonzero stake. Parlays have higher variance than single wagers.")
@@ -489,6 +515,9 @@ struct BettingView: View {
                                 let validated = validatedKinds.contains(recommendation.kind)
                                 let displayStrength: BetStrength = validated ? recommendation.strength : .pass
                                 let evidence = Backtester.bettingPerformance(grades, kind: recommendation.kind, strongOnly: true)
+                                let wagerKey = "\(prediction.matchup.gameKey)-\(recommendation.id)"
+                                let fallbackOdds = defaultOdds(for: recommendation, prediction: prediction)
+                                let enteredStake = bankroll.manualStakes[wagerKey] ?? 0
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack {
                                         Text(recommendation.kind.rawValue).fontWeight(.semibold)
@@ -504,9 +533,12 @@ struct BettingView: View {
                                         Text("My wager").font(.caption).foregroundStyle(.secondary)
                                         Spacer()
                                         Text("$")
-                                        TextField("0.00", value: bankroll.stakeBinding(for: "\(prediction.matchup.gameKey)-\(recommendation.id)"), format: .number.precision(.fractionLength(2)))
+                                        TextField("0.00", value: bankroll.stakeBinding(for: wagerKey), format: .number.precision(.fractionLength(2)))
                                             .multilineTextAlignment(.trailing).frame(width: 90)
                                     }
+                                    OddsReturnRow(odds: bankroll.oddsBinding(for: wagerKey, default: fallbackOdds),
+                                        stake: enteredStake,
+                                        source: recommendation.kind == .moneyline ? (prediction.matchup.bettingLine?.source ?? "Consensus moneyline") : "General -110 estimate · replace with current sportsbook price")
                                 }.padding(.vertical, 3)
                             }
                         }
@@ -524,6 +556,34 @@ struct BettingView: View {
     }
     private var riskLabel: String { bankroll.riskLevel < 0.34 ? "Conservative" : bankroll.riskLevel < 0.67 ? "Balanced" : "Aggressive" }
     private var returnLabel: String { bankroll.returnLevel < 0.34 ? "Steady" : bankroll.returnLevel < 0.67 ? "Balanced" : "High upside" }
+}
+
+private struct OddsReturnRow: View {
+    @Binding var odds: Int
+    let stake: Double
+    let source: String
+    var body: some View {
+        let probability = OddsMath.impliedProbability(american: odds)
+        let profit = OddsMath.profit(stake: stake, american: odds)
+        let total = OddsMath.totalReturn(stake: stake, american: odds)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("American odds").font(.caption).foregroundStyle(.secondary)
+                TextField("-110", value: $odds, format: .number.sign(strategy: .always()))
+                    .multilineTextAlignment(.trailing).frame(width: 90)
+                Spacer()
+                Text("Implied \((probability ?? 0).formatted(.percent.precision(.fractionLength(1))))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
+                Text("Profit \((profit ?? 0).formatted(.currency(code: "USD")))")
+                Spacer()
+                Text("Total return \((total ?? 0).formatted(.currency(code: "USD")))").fontWeight(.semibold)
+            }.font(.caption).monospacedDigit()
+            Text(source).font(.caption2).foregroundStyle(.tertiary)
+        }
+        .padding(8).background(.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+    }
 }
 
 struct PredictionsView: View {

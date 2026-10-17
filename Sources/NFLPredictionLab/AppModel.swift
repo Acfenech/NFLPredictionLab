@@ -118,6 +118,19 @@ final class AppModel: ObservableObject {
             let required = Set(matchups.flatMap { [$0.away.abbreviation, $0.home.abbreviation] })
             let missing = required.subtracting(snapshots.keys)
             let ratedMatchups = matchups.map { matchup in
+                let savedLine = saved.first(where: { $0.matchup.gameKey == matchup.gameKey })?.matchup.bettingLine
+                let baseLine = matchup.bettingLine
+                let preferredLine: BettingLine?
+                if let savedLine, savedLine.source.contains("The Odds API") {
+                    preferredLine = BettingLine(homeSpread: baseLine?.homeSpread ?? savedLine.homeSpread,
+                        total: baseLine?.total ?? savedLine.total,
+                        homeMoneyline: savedLine.homeMoneyline, awayMoneyline: savedLine.awayMoneyline,
+                        source: savedLine.source,
+                        openingHomeSpread: baseLine?.openingHomeSpread ?? savedLine.openingHomeSpread,
+                        openingTotal: baseLine?.openingTotal ?? savedLine.openingTotal,
+                        closingHomeSpread: baseLine?.closingHomeSpread ?? savedLine.closingHomeSpread,
+                        closingTotal: baseLine?.closingTotal ?? savedLine.closingTotal)
+                } else { preferredLine = baseLine }
                 let baseContext = gameContexts[matchup.gameKey]
                 let quarterbackNotes = [availabilityImpacts[matchup.away.abbreviation]?.note,
                                         availabilityImpacts[matchup.home.abbreviation]?.note]
@@ -129,7 +142,7 @@ final class AppModel: ObservableObject {
                     quarterbackSummary: quarterbackNotes.isEmpty ? nil : quarterbackNotes)
                 return Matchup(id: matchup.id, week: matchup.week, kickoff: matchup.kickoff,
                         away: rated(matchup.away, with: snapshots),
-                        home: rated(matchup.home, with: snapshots), bettingLine: matchup.bettingLine,
+                        home: rated(matchup.home, with: snapshots), bettingLine: preferredLine,
                         context: context)
             }
             predictions = await calculate(ratedMatchups, preserving: saved)

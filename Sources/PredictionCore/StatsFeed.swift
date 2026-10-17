@@ -149,6 +149,81 @@ public extension URLRequest {
     }
 }
 
+public struct MoneylineQuote: Hashable, Sendable {
+    public let homeMoneyline: Int
+    public let awayMoneyline: Int
+    public let bookmakers: Int
+    public init(homeMoneyline: Int, awayMoneyline: Int, bookmakers: Int) {
+        self.homeMoneyline = homeMoneyline
+        self.awayMoneyline = awayMoneyline
+        self.bookmakers = bookmakers
+    }
+}
+
+/// Optional licensed price overlay. The API key is supplied at runtime and is never
+/// committed to the project. Prices are the median available US-book decimal price,
+/// converted back to American odds to avoid one outlying book driving the display.
+public struct TheOddsAPIMoneylineFeed: Sendable {
+    public let apiKey: String
+    public init(apiKey: String) { self.apiKey = apiKey }
+
+    public func quotes(for matchups: [Matchup]) async throws -> [String: MoneylineQuote] {
+        var components = URLComponents(string: "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds")!
+        components.queryItems = [
+            URLQueryItem(name: "apiKey", value: apiKey), URLQueryItem(name: "regions", value: "us"),
+            URLQueryItem(name: "markets", value: "h2h"), URLQueryItem(name: "oddsFormat", value: "american")
+        ]
+        let (data, response) = try await URLSession.shared.data(for: .nflStatsRequest(url: components.url!))
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw StatsFeedError.httpStatus(http.statusCode, String(decoding: data.prefix(300), as: UTF8.self))
+        }
+        let events = try JSONDecoder().decode([OddsEvent].self, from: data)
+        var result: [String: MoneylineQuote] = [:]
+        for matchup in matchups {
+            let homeName = Self.teamNames[matchup.home.abbreviation] ?? matchup.home.name
+            let awayName = Self.teamNames[matchup.away.abbreviation] ?? matchup.away.name
+            guard let event = events.first(where: { $0.homeTeam == homeName && $0.awayTeam == awayName }) else { continue }
+            var home: [Double] = [], away: [Double] = []
+            for book in event.bookmakers {
+                guard let market = book.markets.first(where: { $0.key == "h2h" }),
+                      let homePrice = market.outcomes.first(where: { $0.name == homeName })?.price,
+                      let awayPrice = market.outcomes.first(where: { $0.name == awayName })?.price,
+                      let homeDecimal = OddsMath.decimal(fromAmerican: homePrice),
+                      let awayDecimal = OddsMath.decimal(fromAmerican: awayPrice) else { continue }
+                home.append(homeDecimal); away.append(awayDecimal)
+            }
+            guard let homeMedian = Self.median(home), let awayMedian = Self.median(away),
+                  let homeAmerican = OddsMath.american(fromDecimal: homeMedian),
+                  let awayAmerican = OddsMath.american(fromDecimal: awayMedian) else { continue }
+            result[matchup.gameKey] = MoneylineQuote(homeMoneyline: homeAmerican,
+                awayMoneyline: awayAmerican, bookmakers: min(home.count, away.count))
+        }
+        return result
+    }
+
+    private struct OddsEvent: Decodable {
+        let homeTeam: String; let awayTeam: String; let bookmakers: [Bookmaker]
+        enum CodingKeys: String, CodingKey { case homeTeam = "home_team", awayTeam = "away_team", bookmakers }
+    }
+    private struct Bookmaker: Decodable { let markets: [Market] }
+    private struct Market: Decodable { let key: String; let outcomes: [Outcome] }
+    private struct Outcome: Decodable { let name: String; let price: Int }
+    private static func median(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }; let sorted = values.sorted(); let middle = sorted.count / 2
+        return sorted.count.isMultiple(of: 2) ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
+    }
+    private static let teamNames = [
+        "ARI":"Arizona Cardinals", "ATL":"Atlanta Falcons", "BAL":"Baltimore Ravens", "BUF":"Buffalo Bills",
+        "CAR":"Carolina Panthers", "CHI":"Chicago Bears", "CIN":"Cincinnati Bengals", "CLE":"Cleveland Browns",
+        "DAL":"Dallas Cowboys", "DEN":"Denver Broncos", "DET":"Detroit Lions", "GB":"Green Bay Packers",
+        "HOU":"Houston Texans", "IND":"Indianapolis Colts", "JAX":"Jacksonville Jaguars", "KC":"Kansas City Chiefs",
+        "LA":"Los Angeles Rams", "LAC":"Los Angeles Chargers", "LV":"Las Vegas Raiders", "MIA":"Miami Dolphins",
+        "MIN":"Minnesota Vikings", "NE":"New England Patriots", "NO":"New Orleans Saints", "NYG":"New York Giants",
+        "NYJ":"New York Jets", "PHI":"Philadelphia Eagles", "PIT":"Pittsburgh Steelers", "SEA":"Seattle Seahawks",
+        "SF":"San Francisco 49ers", "TB":"Tampa Bay Buccaneers", "TEN":"Tennessee Titans", "WAS":"Washington Commanders"
+    ]
+}
+
 /// Lightweight, no-key baseline feed using ESPN's public scoreboard endpoint.
 /// It supplies current records; a licensed provider can replace it behind TeamStatsFeed.
 public struct ESPNScoreboardFeed: TeamStatsFeed {
