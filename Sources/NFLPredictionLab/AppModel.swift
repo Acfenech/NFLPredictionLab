@@ -8,6 +8,18 @@ import PredictionCore
 
 @MainActor
 final class AppModel: ObservableObject {
+    private struct CachedValidation: Codable {
+        let version: Int
+        let forecastSeason: Int
+        let configuration: ModelConfiguration
+        let trainingGames: Int
+        let validationSeason: Int
+        let grades: [GradedPrediction]
+        let rollingGrades: [GradedPrediction]
+        let rollingSeasons: [Int]
+    }
+
+    private static let validationCacheVersion = 2
     @Published private(set) var predictions: [Prediction] = []
     @Published private(set) var gradedPredictions: [GradedPrediction] = []
     @Published private(set) var status = "Loading current records…"
@@ -39,6 +51,11 @@ final class AppModel: ObservableObject {
     private var advancedMetrics: [String: AdvancedTeamMetrics] = [:]
     private var gameContexts: [String: GameContext] = [:]
     private let freeDataFeed = NFLVerseFreeDataFeed()
+
+    private var validationCacheURL: URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        return base.appending(path: "NFLPredictionLab/historical-validation-v\(Self.validationCacheVersion).json")
+    }
 
     init(feed: any TeamStatsFeed = NFLVerseScheduleFeed(), repository: (any PredictionRepository)? = nil) {
         self.feed = feed
@@ -90,6 +107,8 @@ final class AppModel: ObservableObject {
             let discovered = try await feed.currentSeasonWeek(referenceDate: .now)
             season = discovered.season
             week = discovered.week
+            var historicalValidationReport = loadValidationCache(for: season)
+            if let report = historicalValidationReport { applyValidation(report) }
             if let text = ProcessInfo.processInfo.environment["AVAILABILITY_FEED_URL"], let url = URL(string: text) {
                 do { availabilityImpacts = try await RemoteAvailabilityFeed(url: url).currentImpacts() }
                 catch { notices.append("Availability feed unavailable") }
@@ -105,8 +124,7 @@ final class AppModel: ObservableObject {
             async let scheduleRequest = feed.upcomingMatchups(season: season, week: week)
             async let snapshotsRequest = feed.snapshots(season: season, week: week)
             async let resultsRequest = feed.completedResults(season: season, week: week)
-            async let historicalRequest = feed.historicalGames(seasons: HistoricalValidationWindow.seasons(before: season))
-            let (liveMatchups, snapshots, results, historical) = try await (scheduleRequest, snapshotsRequest, resultsRequest, historicalRequest)
+            let (liveMatchups, snapshots, results) = try await (scheduleRequest, snapshotsRequest, resultsRequest)
             if availabilityImpacts.isEmpty {
                 do { availabilityImpacts = try await freeDataFeed.availabilityImpacts(season: season, week: week) }
                 catch { notices.append("Free injury report delayed") }
@@ -120,15 +138,14 @@ final class AppModel: ObservableObject {
             injuryTeamsLoaded = availabilityImpacts.count
             advancedTeamsLoaded = advancedMetrics.count
             weatherGamesLoaded = gameContexts.values.filter { $0.weatherSummary != nil }.count
-            let historicalValidationReport = await Task.detached(operation: { ModelTrainer.trainAndValidate(historical) }).value
-            if let report = historicalValidationReport {
-                selectedConfiguration = report.configuration
-                validationSummary = Backtester.summarize(report.grades)
-                validationSeason = report.validationSeason
-                trainingGames = report.trainingGames
-                rollingValidationSummary = Backtester.summarize(report.rollingGrades)
-                rollingValidationSeasons = report.rollingSeasons
-                historicalValidationGrades = report.rollingGrades.isEmpty ? report.grades : report.rollingGrades
+            if historicalValidationReport == nil {
+                status = "Weekly data loaded · building historical validation once…"
+                let historical = try await feed.historicalGames(seasons: HistoricalValidationWindow.seasons(before: season))
+                historicalValidationReport = await Task.detached(operation: { ModelTrainer.trainAndValidate(historical) }).value
+                if let report = historicalValidationReport {
+                    applyValidation(report)
+                    saveValidationCache(report, for: season)
+                }
             }
             let matchups = liveMatchups
             let required = Set(matchups.flatMap { [$0.away.abbreviation, $0.home.abbreviation] })
@@ -195,6 +212,42 @@ final class AppModel: ObservableObject {
             lastUpdated = predictions.compactMap(\.recalculatedAt).max() ?? predictions.map(\.generatedAt).max()
             sourceUpdatedAt = predictions.compactMap(\.dataSourceUpdatedAt).max()
             status = (["Stats feed unavailable · cached or neutral forecasts shown"] + notices).joined(separator: " · ")
+        }
+    }
+
+    private func applyValidation(_ report: ModelValidationReport) {
+        selectedConfiguration = report.configuration
+        validationSummary = Backtester.summarize(report.grades)
+        validationSeason = report.validationSeason
+        trainingGames = report.trainingGames
+        rollingValidationSummary = Backtester.summarize(report.rollingGrades)
+        rollingValidationSeasons = report.rollingSeasons
+        historicalValidationGrades = report.rollingGrades.isEmpty ? report.grades : report.rollingGrades
+    }
+
+    private func loadValidationCache(for forecastSeason: Int) -> ModelValidationReport? {
+        guard let data = try? Data(contentsOf: validationCacheURL),
+              let cached = try? JSONDecoder().decode(CachedValidation.self, from: data),
+              cached.version == Self.validationCacheVersion,
+              cached.forecastSeason == forecastSeason else { return nil }
+        return ModelValidationReport(configuration: cached.configuration,
+            trainingGames: cached.trainingGames, validationSeason: cached.validationSeason,
+            grades: cached.grades, rollingGrades: cached.rollingGrades,
+            rollingSeasons: cached.rollingSeasons)
+    }
+
+    private func saveValidationCache(_ report: ModelValidationReport, for forecastSeason: Int) {
+        let cached = CachedValidation(version: Self.validationCacheVersion,
+            forecastSeason: forecastSeason, configuration: report.configuration,
+            trainingGames: report.trainingGames, validationSeason: report.validationSeason,
+            grades: report.grades, rollingGrades: report.rollingGrades,
+            rollingSeasons: report.rollingSeasons)
+        do {
+            try FileManager.default.createDirectory(at: validationCacheURL.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+            try JSONEncoder().encode(cached).write(to: validationCacheURL, options: .atomic)
+        } catch {
+            // A cache failure affects performance only; validation still remains in memory.
         }
     }
 

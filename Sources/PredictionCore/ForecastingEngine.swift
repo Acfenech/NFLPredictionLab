@@ -121,6 +121,8 @@ public struct ForecastingEngine: Sendable {
 }
 
 public enum ModelTrainer {
+    private static let validationSimulations = 150
+
     public static func trainAndValidate(_ games: [HistoricalGame]) -> ModelValidationReport? {
         let seasons = Set(games.map(\.season)).sorted()
         guard seasons.count >= 2, let validationSeason = seasons.last else { return nil }
@@ -132,7 +134,7 @@ public enum ModelTrainer {
             let engine = ForecastingEngine(configuration: config)
             return sample.enumerated().map { index, game in
                 let seed = UInt64(game.season * 10_000 + game.matchup.week * 100 + index + 1)
-                let prediction = engine.predict(game.matchup, simulations: 300, seed: seed)
+                let prediction = engine.predict(game.matchup, simulations: validationSimulations, seed: seed)
                 return GradedPrediction(prediction: prediction, actualHomeScore: game.result.homeScore,
                                         actualAwayScore: game.result.awayScore, evaluationSeason: game.season)
             }
