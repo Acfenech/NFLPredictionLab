@@ -4,6 +4,10 @@ The betting screen calculates implied probability, potential profit, and total r
 
 A private SwiftUI prototype with a shared Swift forecasting engine. Open `NFLPredictionLab.xcodeproj` in Xcode and run the `NFLPredictionLab` scheme on **My Mac** or a connected iPhone.
 
+## MVP 1.3 historical learning
+
+MVP 1.3 expands training to five completed seasons and replaces in-sample configuration selection with nested walk-forward validation. Candidate home-field, team-rating, recent-form, market-blend, and variance settings are scored only on later seasons, with recent folds weighted more heavily. The newest completed season remains an honest outer holdout for the reported accuracy; after that evaluation is captured, the production configuration and probability calibration are refit on all completed historical games. The selection objective retains the required equal weighting of winner correctness and score accuracy.
+
 ## MVP 1.2 parlay planning
 
 MVP 1.2 adds three automatically composed parlay plans: a two-leg lower-variance plan, a three-leg balanced plan, and a four-leg high-upside plan. Legs come from different games, respond to the return preference, support manually entered stakes, and require every included market to pass validation before receiving a nonzero recommended stake.

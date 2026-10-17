@@ -193,6 +193,7 @@ struct UserGuideView: View {
                     GuideItem(icon: "gauge.with.dots.needle.50percent", title: "Brier score", detail: "Measures probability accuracy and penalizes confident mistakes. Lower is better; 0 is perfect.")
                     GuideItem(icon: "equal.circle", title: "Balanced score", detail: "The app’s combined evaluation gives winner accuracy and score accuracy equal importance.")
                     GuideItem(icon: "lock.shield", title: "Held-out validation", detail: "The model is evaluated on games or seasons that were not used to select its settings. This is more trustworthy than performance on training data.")
+                    GuideItem(icon: "calendar.badge.checkmark", title: "Five-season walk-forward training", detail: "Candidate settings are compared season by season using only earlier results, with more recent validation seasons receiving more weight. The newest completed season remains an outer holdout for the displayed evaluation; after grading, all completed seasons are used to fit the next production forecast.")
                 }
 
                 Section("Refresh, history and adjustments") {

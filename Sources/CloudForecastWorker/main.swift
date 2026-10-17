@@ -199,7 +199,7 @@ if let apiKey = environment["THE_ODDS_API_KEY"], !apiKey.isEmpty {
         print("The Odds API unavailable (\(error)); continuing with nflverse consensus")
     }
 }
-let historical = (try? await NFLVerseScheduleFeed().historicalGames(seasons: (season - 3)...(season - 1))) ?? []
+let historical = (try? await NFLVerseScheduleFeed().historicalGames(seasons: (season - 5)...(season - 1))) ?? []
 let validationReport = ModelTrainer.trainAndValidate(historical)
 let engine = ForecastingEngine(configuration: validationReport?.configuration ?? .baseline)
 let forecastSnapshots = snapshots
@@ -281,7 +281,7 @@ let outputPredictions = forecastPredictions.map { prediction in
                      reviewFlag: prediction.reviewFlag)
 }
 let output = ForecastOutput(generatedAt: generatedAt, season: season, week: week,
-                            source: source, modelVersion: "MVP 1.2", predictions: outputPredictions)
+                            source: source, modelVersion: "MVP 1.3", predictions: outputPredictions)
 let encoder = JSONEncoder()
 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 encoder.dateEncodingStrategy = .iso8601

@@ -95,7 +95,7 @@ public struct ForecastingEngine: Sendable {
             awayScore: awayTotal / Double(count),
             homeWinProbability: calibrated(rawHomeProbability),
             simulations: count,
-            simulationSummary: summary, modelVersion: "MVP 1.2", factors: factors,
+            simulationSummary: summary, modelVersion: "MVP 1.3", factors: factors,
             modelOnlyHomeSpread: modelMargin, modelOnlyTotal: modelTotal
         )
     }
@@ -127,48 +127,90 @@ public enum ModelTrainer {
         let training = games.filter { $0.season < validationSeason }
         let validation = games.filter { $0.season == validationSeason }
         guard !training.isEmpty, !validation.isEmpty else { return nil }
-        let candidates = [
-            ModelConfiguration(homeFieldAdvantage: 1.2, ratingWeight: 0.45, formWeight: 0.12, scoreDeviation: 8.5, marketMarginWeight: 0.25, marketTotalWeight: 0.15),
-            .baseline,
-            ModelConfiguration(homeFieldAdvantage: 1.8, ratingWeight: 0.55, formWeight: 0.22, scoreDeviation: 7.8, marketMarginWeight: 0.45, marketTotalWeight: 0.30)
-        ]
+        let candidates = candidateConfigurations
         func grades(_ sample: [HistoricalGame], _ config: ModelConfiguration) -> [GradedPrediction] {
             let engine = ForecastingEngine(configuration: config)
             return sample.enumerated().map { index, game in
-                let prediction = engine.predict(game.matchup, simulations: 600, seed: UInt64(index + 1))
+                let seed = UInt64(game.season * 10_000 + game.matchup.week * 100 + index + 1)
+                let prediction = engine.predict(game.matchup, simulations: 300, seed: seed)
                 return GradedPrediction(prediction: prediction, actualHomeScore: game.result.homeScore, actualAwayScore: game.result.awayScore)
             }
         }
-        let selected = candidates.max { lhs, rhs in
-            (Backtester.summarize(grades(training, lhs))?.balancedAccuracy ?? 0) <
-            (Backtester.summarize(grades(training, rhs))?.balancedAccuracy ?? 0)
-        } ?? .baseline
-        let trainingGrades = grades(training, selected)
-        let calibrated = ModelConfiguration(homeFieldAdvantage: selected.homeFieldAdvantage,
-                                            ratingWeight: selected.ratingWeight,
-                                            formWeight: selected.formWeight,
-                                            scoreDeviation: selected.scoreDeviation,
-                                            calibrationPoints: ProbabilityCalibrator.fit(trainingGrades),
-                                            marketMarginWeight: selected.marketMarginWeight,
-                                            marketTotalWeight: selected.marketTotalWeight)
+
+        func score(_ candidate: ModelConfiguration, using sample: [HistoricalGame]) -> Double {
+            let sampleSeasons = Set(sample.map(\.season)).sorted()
+            // Select settings on seasons that occur strictly after their training data.
+            // A one-season sample is retained as a compatibility fallback for early folds.
+            guard sampleSeasons.count > 1 else {
+                return Backtester.summarize(grades(sample, candidate))?.balancedAccuracy ?? 0
+            }
+            var weightedScore = 0.0, totalWeight = 0.0
+            for (index, heldOut) in sampleSeasons.dropFirst().enumerated() {
+                let fold = sample.filter { $0.season == heldOut }
+                guard let summary = Backtester.summarize(grades(fold, candidate)) else { continue }
+                let recencyWeight = Double(index + 1)
+                weightedScore += summary.balancedAccuracy * recencyWeight
+                totalWeight += recencyWeight
+            }
+            return totalWeight > 0 ? weightedScore / totalWeight : 0
+        }
+
+        func selectedCandidate(using sample: [HistoricalGame]) -> ModelConfiguration {
+            candidates.map { ($0, score($0, using: sample)) }
+                .max { $0.1 < $1.1 }?.0 ?? .baseline
+        }
+
+        func calibrated(_ selected: ModelConfiguration, using sample: [HistoricalGame]) -> ModelConfiguration {
+            ModelConfiguration(homeFieldAdvantage: selected.homeFieldAdvantage,
+                ratingWeight: selected.ratingWeight, formWeight: selected.formWeight,
+                scoreDeviation: selected.scoreDeviation,
+                calibrationPoints: ProbabilityCalibrator.fit(grades(sample, selected)),
+                marketMarginWeight: selected.marketMarginWeight,
+                marketTotalWeight: selected.marketTotalWeight)
+        }
+
+        // Outer holdout: the newest completed season never participates in the
+        // configuration or calibration used to produce its reported grades.
+        let validationSelected = selectedCandidate(using: training)
+        let validationConfiguration = calibrated(validationSelected, using: training)
+        let validationGrades = grades(validation, validationConfiguration)
         var rollingGrades: [GradedPrediction] = []
         var rollingSeasons: [Int] = []
         for heldOut in seasons.dropFirst() {
             let prior = games.filter { $0.season < heldOut }
             let fold = games.filter { $0.season == heldOut }
             guard !prior.isEmpty, !fold.isEmpty else { continue }
-            let foldPoints = ProbabilityCalibrator.fit(grades(prior, selected))
-            let foldConfiguration = ModelConfiguration(homeFieldAdvantage: selected.homeFieldAdvantage,
-                ratingWeight: selected.ratingWeight, formWeight: selected.formWeight,
-                scoreDeviation: selected.scoreDeviation, calibrationPoints: foldPoints,
-                marketMarginWeight: selected.marketMarginWeight, marketTotalWeight: selected.marketTotalWeight)
+            let foldSelected = selectedCandidate(using: prior)
+            let foldConfiguration = calibrated(foldSelected, using: prior)
             rollingGrades.append(contentsOf: grades(fold, foldConfiguration))
             rollingSeasons.append(heldOut)
         }
-        return ModelValidationReport(configuration: calibrated, trainingGames: training.count,
-                                     validationSeason: validationSeason, grades: grades(validation, calibrated),
+
+        // Once honest evaluation is captured, refit on every completed season for
+        // the configuration used to forecast the next season.
+        let productionSelected = selectedCandidate(using: games)
+        let productionConfiguration = calibrated(productionSelected, using: games)
+        return ModelValidationReport(configuration: productionConfiguration, trainingGames: games.count,
+                                     validationSeason: validationSeason, grades: validationGrades,
                                      rollingGrades: rollingGrades, rollingSeasons: rollingSeasons)
     }
+
+    private static let candidateConfigurations: [ModelConfiguration] = {
+        var candidates: [ModelConfiguration] = []
+        for homeField in [1.2, 1.6, 2.0] {
+            for rating in [0.42, 0.50, 0.58] {
+                for marketMargin in [0.25, 0.40] {
+                    let form = rating < 0.5 ? 0.14 : rating > 0.5 ? 0.22 : 0.18
+                    let deviation = marketMargin > 0.3 ? 7.9 : 8.4
+                    let marketTotal = marketMargin > 0.3 ? 0.30 : 0.18
+                    candidates.append(ModelConfiguration(homeFieldAdvantage: homeField,
+                        ratingWeight: rating, formWeight: form, scoreDeviation: deviation,
+                        marketMarginWeight: marketMargin, marketTotalWeight: marketTotal))
+                }
+            }
+        }
+        return candidates
+    }()
 }
 
 public enum ProbabilityCalibrator {

@@ -91,7 +91,7 @@ final class AppModel: ObservableObject {
             async let scheduleRequest = feed.upcomingMatchups(season: season, week: week)
             async let snapshotsRequest = feed.snapshots(season: season, week: week)
             async let resultsRequest = feed.completedResults(season: season, week: week)
-            async let historicalRequest = feed.historicalGames(seasons: (season - 3)...(season - 1))
+            async let historicalRequest = feed.historicalGames(seasons: (season - 5)...(season - 1))
             let (liveMatchups, snapshots, results, historical) = try await (scheduleRequest, snapshotsRequest, resultsRequest, historicalRequest)
             if availabilityImpacts.isEmpty {
                 do { availabilityImpacts = try await freeDataFeed.availabilityImpacts(season: season, week: week) }
@@ -213,7 +213,7 @@ final class AppModel: ObservableObject {
                 return Prediction(id: prior?.id ?? fresh.id, matchup: matchup, homeScore: fresh.homeScore,
                                   awayScore: fresh.awayScore, homeWinProbability: fresh.homeWinProbability,
                                   simulations: fresh.simulations, generatedAt: prior?.generatedAt ?? fresh.generatedAt,
-                                  simulationSummary: fresh.simulationSummary, modelVersion: "MVP 1.2",
+                                  simulationSummary: fresh.simulationSummary, modelVersion: "MVP 1.3",
                                   dataSourceUpdatedAt: .now, recalculatedAt: .now, factors: fresh.factors,
                                   previousHomeWinProbability: prior?.homeWinProbability,
                                   previousHomeScore: prior?.homeScore, previousAwayScore: prior?.awayScore,

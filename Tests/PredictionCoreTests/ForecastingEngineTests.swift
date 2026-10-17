@@ -146,7 +146,7 @@ import Testing
         HistoricalGame(season: 2024, matchup: matchup, result: GameResult(awayAbbreviation: "A", homeAbbreviation: "H", awayScore: 20, homeScore: 27))
     ]
     let report = ModelTrainer.trainAndValidate(games)
-    #expect(report?.trainingGames == 1)
+    #expect(report?.trainingGames == 2)
     #expect(report?.validationSeason == 2024)
     #expect(report?.grades.count == 1)
 }
