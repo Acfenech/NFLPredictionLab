@@ -353,6 +353,57 @@ public struct BettingPerformance: Sendable, Hashable {
     public var returnOnStake: Double { graded == 0 ? 0 : netUnits / Double(graded) }
 }
 
+public struct BetValidationPolicy: Sendable, Hashable {
+    public let minimumBets: Int
+    public let minimumWinRate: Double?
+    public let minimumReturnOnStake: Double
+    public let minimumSeasons: Int
+
+    public static func standard(for kind: BetKind) -> Self {
+        kind == .moneyline
+            ? Self(minimumBets: 100, minimumWinRate: nil, minimumReturnOnStake: 0.03, minimumSeasons: 3)
+            : Self(minimumBets: 30, minimumWinRate: 0.54, minimumReturnOnStake: 0, minimumSeasons: 3)
+    }
+}
+
+public struct BetValidationResult: Sendable, Hashable {
+    public let kind: BetKind
+    public let performance: BettingPerformance
+    public let seasonsTested: Int
+    public let profitableSeasons: Int
+    public let requiredProfitableSeasons: Int
+    public let policy: BetValidationPolicy
+    public let isValidated: Bool
+
+    public var progress: Double {
+        let sample = min(1, Double(performance.graded) / Double(policy.minimumBets))
+        let seasons = min(1, Double(seasonsTested) / Double(policy.minimumSeasons))
+        let stability = requiredProfitableSeasons == 0 ? 0 : min(1, Double(profitableSeasons) / Double(requiredProfitableSeasons))
+        let quality: Double
+        if let minimumWinRate = policy.minimumWinRate {
+            quality = min(1, performance.winRate / minimumWinRate)
+        } else {
+            quality = policy.minimumReturnOnStake == 0 ? 1 : min(1, max(0, performance.returnOnStake) / policy.minimumReturnOnStake)
+        }
+        return (sample + seasons + stability + quality) / 4
+    }
+
+    public var unmetRequirements: [String] {
+        var reasons: [String] = []
+        if performance.graded < policy.minimumBets { reasons.append("\(performance.graded)/\(policy.minimumBets) bets") }
+        if let target = policy.minimumWinRate, performance.winRate < target {
+            reasons.append("\(performance.winRate.formatted(.percent.precision(.fractionLength(1))))/\(target.formatted(.percent.precision(.fractionLength(0)))) win rate")
+        }
+        if performance.returnOnStake < policy.minimumReturnOnStake {
+            reasons.append("\(performance.returnOnStake.formatted(.percent.precision(.fractionLength(1))))/\(policy.minimumReturnOnStake.formatted(.percent.precision(.fractionLength(0)))) return")
+        }
+        if performance.netUnits <= 0 { reasons.append("profit must be positive") }
+        if seasonsTested < policy.minimumSeasons { reasons.append("\(seasonsTested)/\(policy.minimumSeasons) seasons") }
+        if profitableSeasons < requiredProfitableSeasons { reasons.append("\(profitableSeasons)/\(requiredProfitableSeasons) profitable seasons") }
+        return reasons
+    }
+}
+
 public struct SimulationSummary: Codable, Hashable, Sendable {
     public let awayLow: Double
     public let awayHigh: Double
@@ -377,12 +428,14 @@ public struct GradedPrediction: Codable, Identifiable, Sendable {
     public let prediction: Prediction
     public let actualHomeScore: Int
     public let actualAwayScore: Int
+    public let evaluationSeason: Int?
 
-    public init(id: UUID = UUID(), prediction: Prediction, actualHomeScore: Int, actualAwayScore: Int) {
+    public init(id: UUID = UUID(), prediction: Prediction, actualHomeScore: Int, actualAwayScore: Int, evaluationSeason: Int? = nil) {
         self.id = id
         self.prediction = prediction
         self.actualHomeScore = actualHomeScore
         self.actualAwayScore = actualAwayScore
+        self.evaluationSeason = evaluationSeason
     }
 
     public var winnerCorrect: Bool {
@@ -494,6 +547,30 @@ public enum Backtester {
         }
         return BettingPerformance(graded: wins + losses + pushes, wins: wins, losses: losses,
                                   pushes: pushes, netUnits: netUnits)
+    }
+
+    public static func bettingValidation(_ grades: [GradedPrediction], kind: BetKind,
+                                         policy: BetValidationPolicy? = nil) -> BetValidationResult {
+        let policy = policy ?? .standard(for: kind)
+        let performance = bettingPerformance(grades, kind: kind, strongOnly: true)
+        let seasonal = Dictionary(grouping: grades.compactMap { grade in
+            grade.evaluationSeason.map { ($0, grade) }
+        }, by: { $0.0 }).mapValues { pairs in
+            bettingPerformance(pairs.map(\.1), kind: kind, strongOnly: true)
+        }.filter { $0.value.graded > 0 }
+        let requiredProfitableSeasons = max(2, Int(ceil(Double(seasonal.count) / 2)))
+        let profitableSeasons = seasonal.values.filter { $0.netUnits > 0 }.count
+        let meetsQuality = policy.minimumWinRate.map { performance.winRate >= $0 } ?? true
+        let validated = performance.graded >= policy.minimumBets
+            && meetsQuality
+            && performance.returnOnStake >= policy.minimumReturnOnStake
+            && performance.netUnits > 0
+            && seasonal.count >= policy.minimumSeasons
+            && profitableSeasons >= requiredProfitableSeasons
+        return BetValidationResult(kind: kind, performance: performance,
+            seasonsTested: seasonal.count, profitableSeasons: profitableSeasons,
+            requiredProfitableSeasons: requiredProfitableSeasons, policy: policy,
+            isValidated: validated)
     }
 }
 

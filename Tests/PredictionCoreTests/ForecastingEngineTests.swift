@@ -220,3 +220,38 @@ import Testing
     #expect(performance.netUnits == 1)
     #expect(performance.returnOnStake == 0.5)
 }
+
+@Test func validationRequiresOutOfSampleEvidenceAcrossThreeSeasons() {
+    let away = Team(abbreviation: "A", name: "Away", offensiveRating: 0, defensiveRating: 0)
+    let home = Team(abbreviation: "H", name: "Home", offensiveRating: 0, defensiveRating: 0)
+    let line = BettingLine(homeSpread: 2.5, total: 44.5, homeMoneyline: -140, awayMoneyline: 120)
+    let prediction = Prediction(matchup: Matchup(week: 1, kickoff: .now, away: away, home: home, bettingLine: line),
+                                homeScore: 30, awayScore: 20, homeWinProbability: 0.78, simulations: 1)
+    let twoSeasons = (0..<30).map { index in
+        GradedPrediction(prediction: prediction, actualHomeScore: 31, actualAwayScore: 17,
+                         evaluationSeason: index < 15 ? 2023 : 2024)
+    }
+    let incomplete = Backtester.bettingValidation(twoSeasons, kind: .spread)
+    #expect(!incomplete.isValidated)
+    #expect(incomplete.seasonsTested == 2)
+
+    let threeSeasons = (0..<30).map { index in
+        GradedPrediction(prediction: prediction, actualHomeScore: 31, actualAwayScore: 17,
+                         evaluationSeason: 2022 + index / 10)
+    }
+    let complete = Backtester.bettingValidation(threeSeasons, kind: .spread)
+    #expect(complete.isValidated)
+    #expect(complete.profitableSeasons == 3)
+}
+
+@Test func walkForwardGradesRetainTheirEvaluationSeason() {
+    let away = Team(abbreviation: "A", name: "Away", offensiveRating: -2, defensiveRating: -2)
+    let home = Team(abbreviation: "H", name: "Home", offensiveRating: 2, defensiveRating: 2)
+    let matchup = Matchup(week: 2, kickoff: .now, away: away, home: home)
+    let games = [2022, 2023, 2024].map {
+        HistoricalGame(season: $0, matchup: matchup,
+                       result: GameResult(awayAbbreviation: "A", homeAbbreviation: "H", awayScore: 17, homeScore: 24))
+    }
+    let report = ModelTrainer.trainAndValidate(games)
+    #expect(Set(report?.rollingGrades.compactMap(\.evaluationSeason) ?? []) == Set([2023, 2024]))
+}

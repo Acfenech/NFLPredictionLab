@@ -133,7 +133,8 @@ public enum ModelTrainer {
             return sample.enumerated().map { index, game in
                 let seed = UInt64(game.season * 10_000 + game.matchup.week * 100 + index + 1)
                 let prediction = engine.predict(game.matchup, simulations: 300, seed: seed)
-                return GradedPrediction(prediction: prediction, actualHomeScore: game.result.homeScore, actualAwayScore: game.result.awayScore)
+                return GradedPrediction(prediction: prediction, actualHomeScore: game.result.homeScore,
+                                        actualAwayScore: game.result.awayScore, evaluationSeason: game.season)
             }
         }
 

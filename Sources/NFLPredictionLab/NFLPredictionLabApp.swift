@@ -41,13 +41,14 @@ struct DashboardView: View {
                 switch selection ?? .dashboard {
                 case .dashboard: WeeklyDashboardView(model: model, bankroll: bankroll, navigate: { selection = $0 })
                 case .forecasts: PredictionsView(predictions: model.predictions, season: model.season, week: model.week, feedStatus: model.status, isRefreshing: model.isRefreshing) { Task { await model.refresh() } }
-                case .bets: BettingView(predictions: model.predictions, grades: model.gradedPredictions, bankroll: bankroll)
+                case .bets: BettingView(predictions: model.predictions, grades: model.historicalValidationGrades, bankroll: bankroll)
                 case .simulations: SimulationView(predictions: model.predictions)
                 case .accuracy: AccuracyView(grades: model.gradedPredictions, archiveCount: model.archiveCount,
                                              validationSummary: model.validationSummary, validationSeason: model.validationSeason,
                                              trainingGames: model.trainingGames,
                                              rollingValidationSummary: model.rollingValidationSummary,
-                                             rollingValidationSeasons: model.rollingValidationSeasons)
+                                             rollingValidationSeasons: model.rollingValidationSeasons,
+                                             historicalValidationGrades: model.historicalValidationGrades)
                 case .history: HistoryView(bundles: model.archiveBundles)
                 case .model: SettingsView(model: model)
                 case .guide: UserGuideView()
@@ -94,10 +95,7 @@ struct WeeklyDashboardView: View {
     private var flagged: Int { model.predictions.filter { $0.reviewFlag != nil }.count }
     private var validatedKinds: Set<BetKind> {
         Set([BetKind.spread, .total, .moneyline].filter { kind in
-            let performance = Backtester.bettingPerformance(model.gradedPredictions, kind: kind, strongOnly: true)
-            return kind == .moneyline
-                ? performance.graded >= 100 && performance.returnOnStake >= 0.03
-                : performance.graded >= 30 && performance.winRate >= 0.54
+            Backtester.bettingValidation(model.historicalValidationGrades, kind: kind).isValidated
         })
     }
     private var strongestBets: [(prediction: Prediction, recommendation: BetRecommendation, probability: Double)] {
@@ -401,11 +399,7 @@ struct BettingView: View {
     }
     private var validatedKinds: Set<BetKind> {
         Set([BetKind.spread, .total, .moneyline].filter { kind in
-            let performance = Backtester.bettingPerformance(grades, kind: kind, strongOnly: true)
-            if kind == .moneyline {
-                return performance.graded >= 100 && performance.returnOnStake >= 0.03
-            }
-            return performance.graded >= 30 && performance.winRate >= 0.54
+            Backtester.bettingValidation(grades, kind: kind).isValidated
         })
     }
     private var displayedPredictions: [Prediction] {
@@ -1072,6 +1066,7 @@ struct AccuracyView: View {
     let trainingGames: Int
     let rollingValidationSummary: BacktestSummary?
     let rollingValidationSeasons: [Int]
+    let historicalValidationGrades: [GradedPrediction]
     var body: some View {
         NavigationStack {
             if grades.isEmpty {
@@ -1165,8 +1160,8 @@ struct AccuracyView: View {
                         }
                     }
                     Section("Recommendation backtest") {
-                        let allBets = Backtester.bettingPerformance(grades)
-                        let strongBets = Backtester.bettingPerformance(grades, strongOnly: true)
+                        let allBets = Backtester.bettingPerformance(historicalValidationGrades)
+                        let strongBets = Backtester.bettingPerformance(historicalValidationGrades, strongOnly: true)
                         if allBets.graded == 0 {
                             Text("No qualifying historical recommendations yet.").foregroundStyle(.secondary)
                         } else {
@@ -1175,11 +1170,26 @@ struct AccuracyView: View {
                             LabeledContent("Win rate excluding pushes", value: allBets.winRate.formatted(.percent.precision(.fractionLength(1))))
                             LabeledContent("Strong-edge record", value: "\(strongBets.wins)-\(strongBets.losses)-\(strongBets.pushes) · \(strongBets.winRate.formatted(.percent.precision(.fractionLength(1))))")
                             ForEach([BetKind.spread, .total, .moneyline], id: \.self) { kind in
-                                let result = Backtester.bettingPerformance(grades, kind: kind)
-                                let strong = Backtester.bettingPerformance(grades, kind: kind, strongOnly: true)
-                                LabeledContent(kind.rawValue, value: result.graded == 0 ? "—" : "all \(result.winRate.formatted(.percent.precision(.fractionLength(0)))) · strong \(strong.winRate.formatted(.percent.precision(.fractionLength(0)))) (\(strong.graded))")
+                                let validation = Backtester.bettingValidation(historicalValidationGrades, kind: kind)
+                                VStack(alignment: .leading, spacing: 5) {
+                                    HStack {
+                                        Label(kind.rawValue, systemImage: validation.isValidated ? "checkmark.shield.fill" : "clock.badge.exclamationmark")
+                                            .foregroundStyle(validation.isValidated ? .green : .orange)
+                                        Spacer()
+                                        Text(validation.isValidated ? "Validated" : "Building evidence").font(.caption.bold())
+                                    }
+                                    ProgressView(value: validation.progress)
+                                    Text("Strong edges: \(validation.performance.wins)-\(validation.performance.losses)-\(validation.performance.pushes) · \(validation.performance.winRate.formatted(.percent.precision(.fractionLength(1)))) wins · \(validation.performance.returnOnStake.formatted(.percent.precision(.fractionLength(1)))) return")
+                                        .font(.caption)
+                                    Text("\(validation.seasonsTested) held-out seasons · \(validation.profitableSeasons) profitable")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    if !validation.isValidated {
+                                        Text("Still needed: \(validation.unmetRequirements.joined(separator: " · "))")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }.padding(.vertical, 4)
                             }
-                            Text("Historical results use the same minimum edge thresholds shown in the Bets screen. They do not include sportsbook limits, line movement after publication, or transaction costs.").font(.caption).foregroundStyle(.secondary)
+                            Text("Only rolling out-of-sample seasons determine validation. Live and archived app picks remain visible elsewhere but cannot promote a market to Validated. Historical lines are nflverse closing lines; exact earlier sportsbook availability, limits and transaction costs are not reconstructed.").font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }.navigationTitle("Accuracy")

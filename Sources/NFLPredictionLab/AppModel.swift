@@ -23,6 +23,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var selectedConfiguration = ModelConfiguration.baseline
     @Published private(set) var rollingValidationSummary: BacktestSummary?
     @Published private(set) var rollingValidationSeasons: [Int] = []
+    @Published private(set) var historicalValidationGrades: [GradedPrediction] = []
     @Published private(set) var storageLabel = "CloudKit"
     @Published private(set) var archiveCount = 0
     @Published private(set) var archiveBundles: [[Prediction]] = []
@@ -127,6 +128,7 @@ final class AppModel: ObservableObject {
                 trainingGames = report.trainingGames
                 rollingValidationSummary = Backtester.summarize(report.rollingGrades)
                 rollingValidationSeasons = report.rollingSeasons
+                historicalValidationGrades = report.rollingGrades.isEmpty ? report.grades : report.rollingGrades
             }
             let matchups = liveMatchups
             let required = Set(matchups.flatMap { [$0.away.abbreviation, $0.home.abbreviation] })
