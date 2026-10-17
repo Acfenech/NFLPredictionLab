@@ -184,7 +184,8 @@ struct UserGuideView: View {
                     GuideItem(icon: "arrow.up.right.circle.fill", title: "Return target", detail: "Controls preference for steadier allocations versus higher-upside markets. Higher upside also means greater variance and does not imply better expected results.")
                     GuideItem(icon: "arrow.counterclockwise.circle.fill", title: "Reset to Recommended", detail: "Restores the balanced planning defaults: 35% risk and 40% return preference. It does not change the bankroll, weekly amount, wagers, or entered odds.")
                     GuideItem(icon: "lock.shield.fill", title: "Recommended plan", detail: "Allocates money only when a market passes the historical validation gate. If none qualifies, the recommended amount remains $0 regardless of slider settings.")
-                    GuideItem(icon: "square.stack.3d.up.fill", title: "Three parlay plans", detail: "Lower Variance uses two side/total legs, Balanced uses three diversified edges, and High Upside uses four legs with extra moneyline preference. Games are not repeated inside one parlay, and every leg must be validated before its suggested stake exceeds $0.")
+                    GuideItem(icon: "eye.trianglebadge.exclamationmark", title: "Unvalidated recommendations", detail: "The Betting screen toggle can reveal a separate speculative plan from strong model edges that failed validation. These entries remain orange and explicitly marked Unvalidated; enabling the toggle does not improve their historical performance.")
+                    GuideItem(icon: "square.stack.3d.up.fill", title: "Three parlay plans", detail: "Lower Variance uses two side/total legs, Balanced uses three diversified edges, and High Upside uses four legs with extra moneyline preference. Games are not repeated inside one parlay. Suggested stakes require validation unless you explicitly enable speculative recommendations.")
                     GuideItem(icon: "equal.square.fill", title: "Odds and returns", detail: "Enter the exact American odds shown by your sportsbook before placing a wager. Potential profit excludes the returned stake; total return includes it. Displayed returns are mathematical estimates and change when the price changes.")
                 }
 
@@ -306,6 +307,7 @@ private struct ParlayPlan: Identifiable {
     let legs: [ParlayLeg]
     let budgetShare: Double
     var isValidated: Bool { !legs.isEmpty && legs.allSatisfy(\.validated) }
+    func isFundable(showingUnvalidated: Bool) -> Bool { isValidated || (showingUnvalidated && !legs.isEmpty) }
 }
 
 struct BettingView: View {
@@ -314,6 +316,7 @@ struct BettingView: View {
     @StateObject private var bankroll = BankrollStore()
     @State private var filter = "All"
     @State private var showAllPasses = false
+    @State private var showUnvalidatedRecommendations = false
     private func defaultOdds(for recommendation: BetRecommendation, prediction: Prediction) -> Int {
         guard recommendation.kind == .moneyline, let line = prediction.matchup.bettingLine else { return -110 }
         return recommendation.selection.hasPrefix(prediction.matchup.home.abbreviation)
@@ -338,7 +341,8 @@ struct BettingView: View {
     private var allocations: [RecommendedAllocation] {
         let eligible = predictions.flatMap { prediction in
             prediction.bettingRecommendations.compactMap { recommendation -> (Prediction, BetRecommendation)? in
-                validatedKinds.contains(recommendation.kind) && recommendation.strength == .strong ? (prediction, recommendation) : nil
+                (validatedKinds.contains(recommendation.kind) || showUnvalidatedRecommendations) && recommendation.strength == .strong
+                    ? (prediction, recommendation) : nil
             }
         }
         guard !eligible.isEmpty else { return [] }
@@ -349,7 +353,8 @@ struct BettingView: View {
             return strength * concentration * upside
         }
         let totalWeight = weights.reduce(0, +)
-        let available = min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll)) * (parlayPlans.contains(where: \.isValidated) ? 0.80 : 1.0)
+        let hasFundableParlay = parlayPlans.contains { $0.isFundable(showingUnvalidated: showUnvalidatedRecommendations) }
+        let available = min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll)) * (hasFundableParlay ? 0.80 : 1.0)
         return zip(eligible, weights).map { pair, weight in
             let (prediction, recommendation) = pair
             let key = "\(prediction.matchup.gameKey)-\(recommendation.id)"
@@ -398,6 +403,20 @@ struct BettingView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    Toggle(isOn: $showUnvalidatedRecommendations) {
+                        Label("Show Unvalidated Recommendations", systemImage: "eye.trianglebadge.exclamationmark")
+                    }
+                    .fontWeight(.semibold)
+                    if showUnvalidatedRecommendations {
+                        Label("Speculative mode is on. These candidates failed historical validation and have a higher demonstrated risk of loss.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout).foregroundStyle(.orange)
+                    } else {
+                        Text("Off · only historically validated markets can receive suggested amounts.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("Bankroll & weekly plan") {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
@@ -451,24 +470,29 @@ struct BettingView: View {
                     }
                 }
 
-                Section("Recommended weekly plan") {
+                Section(showUnvalidatedRecommendations ? "Speculative weekly plan" : "Recommended weekly plan") {
                     if allocations.isEmpty {
-                        Label("$0 recommended · no market passes validation", systemImage: "lock.shield.fill")
+                        Label(showUnvalidatedRecommendations ? "$0 speculative · no strong model edge" : "$0 recommended · no market passes validation",
+                              systemImage: showUnvalidatedRecommendations ? "eye.slash.fill" : "lock.shield.fill")
                             .font(.headline).foregroundStyle(.orange)
-                        Text("The planner will distribute the funded weekly amount only across recommendations that satisfy the historical sample-size and win-rate gate.")
+                        Text(showUnvalidatedRecommendations
+                             ? "The current model has no strong candidate to fund, even with historical validation relaxed."
+                             : "The planner will distribute the funded weekly amount only across recommendations that satisfy the historical sample-size and win-rate gate.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
-                        ForEach(allocations) { allocation in
+                        ForEach(allocations, id: \.id) { allocation in
+                            let allocationValidated = validatedKinds.contains(allocation.recommendation.kind)
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(allocation.recommendation.selection).fontWeight(.semibold)
-                                    Text("\(allocation.matchup) · \(allocation.recommendation.kind.rawValue)").font(.caption).foregroundStyle(.secondary)
+                                    Text("\(allocation.matchup) · \(allocation.recommendation.kind.rawValue) · \(allocationValidated ? "Validated" : "Unvalidated")")
+                                        .font(.caption).foregroundStyle(allocationValidated ? Color.secondary : Color.orange)
                                 }
                                 Spacer()
                                 Text(allocation.amount.formatted(.currency(code: "USD"))).font(.headline).monospacedDigit()
                             }
                         }
-                        LabeledContent("Total recommended", value: allocations.map(\.amount).reduce(0, +).formatted(.currency(code: "USD")))
+                        LabeledContent(showUnvalidatedRecommendations ? "Total speculative" : "Total recommended", value: allocations.map(\.amount).reduce(0, +).formatted(.currency(code: "USD")))
                     }
                 }
 
@@ -476,7 +500,8 @@ struct BettingView: View {
                     ForEach(parlayPlans) { parlay in
                         let fundedWeeklyAmount = min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll))
                         let riskMultiplier = parlay.id == "lower" ? 1.25 - bankroll.riskLevel * 0.5 : parlay.id == "upside" ? 0.5 + bankroll.riskLevel : 1.0
-                        let suggestedStake = parlay.isValidated ? fundedWeeklyAmount * parlay.budgetShare * riskMultiplier : 0
+                        let fundable = parlay.isFundable(showingUnvalidated: showUnvalidatedRecommendations)
+                        let suggestedStake = fundable ? fundedWeeklyAmount * parlay.budgetShare * riskMultiplier : 0
                         let parlayKey = "parlay-\(parlay.id)"
                         let calculatedOdds = OddsMath.parlayAmerican(parlay.legs.map(\.odds)) ?? 100
                         let enteredStake = bankroll.manualStakes[parlayKey] ?? 0
@@ -497,12 +522,14 @@ struct BettingView: View {
                                         Text("\(leg.matchup) · \(leg.recommendation.rationale)").font(.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    Image(systemName: leg.validated ? "checkmark.seal.fill" : "lock.fill").foregroundStyle(leg.validated ? .green : .secondary)
+                                    Image(systemName: leg.validated ? "checkmark.seal.fill" : showUnvalidatedRecommendations ? "exclamationmark.triangle.fill" : "lock.fill")
+                                        .foregroundStyle(leg.validated ? .green : showUnvalidatedRecommendations ? .orange : .secondary)
                                 }
                             }
                             Divider()
                             HStack {
-                                Label(parlay.isValidated ? "Validated" : "Preview only · Pass", systemImage: parlay.isValidated ? "checkmark.shield.fill" : "hand.raised.fill")
+                                Label(parlay.isValidated ? "Validated" : showUnvalidatedRecommendations ? "Speculative · Unvalidated" : "Preview only · Pass",
+                                      systemImage: parlay.isValidated ? "checkmark.shield.fill" : showUnvalidatedRecommendations ? "exclamationmark.triangle.fill" : "hand.raised.fill")
                                     .foregroundStyle(parlay.isValidated ? .green : .orange)
                                 Spacer()
                                 Text("Suggested \(suggestedStake.formatted(.currency(code: "USD")))").fontWeight(.semibold).monospacedDigit()
@@ -517,7 +544,9 @@ struct BettingView: View {
                                           stake: enteredStake, source: "Calculated leg price · replace with bet365 combined odds")
                         }.padding(.vertical, 5)
                     }
-                    Text("Parlay legs are selected from different games to reduce direct correlation. Every leg must pass its market validation gate before the app recommends a nonzero stake. Parlays have higher variance than single wagers.")
+                    Text(showUnvalidatedRecommendations
+                         ? "Speculative parlay amounts are visible by your choice even though the legs failed validation. Parlays compound estimation error and have substantially higher variance."
+                         : "Parlay legs are selected from different games to reduce direct correlation. Every leg must pass its market validation gate before the app recommends a nonzero stake. Parlays have higher variance than single wagers.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
@@ -540,7 +569,7 @@ struct BettingView: View {
                         } else {
                             ForEach(prediction.bettingRecommendations.filter { filter == "All" || $0.kind.rawValue == filter }) { recommendation in
                                 let validated = validatedKinds.contains(recommendation.kind)
-                                let displayStrength: BetStrength = validated ? recommendation.strength : .pass
+                                let displayStrength: BetStrength = (validated || showUnvalidatedRecommendations) ? recommendation.strength : .pass
                                 let evidence = Backtester.bettingPerformance(grades, kind: recommendation.kind, strongOnly: true)
                                 let wagerKey = "\(prediction.matchup.gameKey)-\(recommendation.id)"
                                 let fallbackOdds = defaultOdds(for: recommendation, prediction: prediction)
@@ -549,8 +578,9 @@ struct BettingView: View {
                                     HStack {
                                         Text(recommendation.kind.rawValue).fontWeight(.semibold)
                                         Spacer()
-                                        Label(validated ? displayStrength.rawValue : "Not validated", systemImage: validated ? "checkmark.seal.fill" : "lock.fill")
-                                            .foregroundStyle(displayStrength == .strong ? .green : displayStrength == .lean ? .orange : .secondary)
+                                        Label(validated ? displayStrength.rawValue : showUnvalidatedRecommendations ? "Speculative · \(displayStrength.rawValue)" : "Not validated",
+                                              systemImage: validated ? "checkmark.seal.fill" : showUnvalidatedRecommendations ? "exclamationmark.triangle.fill" : "lock.fill")
+                                            .foregroundStyle(validated && displayStrength == .strong ? .green : displayStrength == .lean || showUnvalidatedRecommendations ? .orange : .secondary)
                                     }
                                     Text(displayStrength == .pass ? "Pass on \(recommendation.selection)" : recommendation.selection)
                                     Text(recommendation.rationale).font(.caption).foregroundStyle(.secondary)

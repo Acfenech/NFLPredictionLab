@@ -20,6 +20,8 @@ MVP 1.1 adds a locally saved bankroll and weekly wager plan, per-market user-ent
 
 The allocation controls include **Reset to Recommended**, which restores the balanced 35% risk and 40% return-preference defaults without changing bankroll, weekly budget, wagers, or sportsbook odds.
 
+An explicit **Show Unvalidated Recommendations** toggle reveals a separately labeled speculative plan and speculative parlay amounts. It is off by default. Every affected selection remains marked Unvalidated, and the historical gate itself is never weakened or bypassed silently.
+
 ## MVP 1.0 professional interface
 
 MVP 1.0 introduces an adaptive sidebar, weekly intelligence dashboard, visual matchup cards, a scoreboard-style detail view, probability bars, calibration charts, streamlined betting filters with visible evidence counts, searchable model controls, polished loading states, and a reusable visual design system across macOS and iPhone.
