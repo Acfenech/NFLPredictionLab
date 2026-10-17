@@ -150,7 +150,7 @@ struct WeeklyDashboardView: View {
                                 ContentUnavailableView("No strong betting candidates", systemImage: "hand.raised.fill", description: Text("Passing is a valid weekly decision when no market clears the model threshold."))
                             } else {
                                 ForEach(Array(strongestBets.prefix(5).enumerated()), id: \.offset) { _, item in
-                                    HStack(spacing: 14) {
+                                    Button { navigate(.forecasts) } label: { HStack(spacing: 14) {
                                         VStack(alignment: .leading, spacing: 4) {
                                             HStack {
                                                 Text(item.recommendation.selection).font(.headline)
@@ -166,9 +166,11 @@ struct WeeklyDashboardView: View {
                                         Spacer()
                                         VStack(alignment: .trailing, spacing: 3) {
                                             Text(item.probability.formatted(.percent.precision(.fractionLength(0)))).font(.title3.bold()).foregroundStyle(AppTheme.accent)
-                                            Text("model win chance").font(.caption2).foregroundStyle(.secondary)
+                                            Text("bet win estimate").font(.caption2).foregroundStyle(.secondary)
+                                            Label("Open matchup", systemImage: "chevron.right")
+                                                .font(.caption2).foregroundStyle(.secondary)
                                         }
-                                    }.cardStyle()
+                                    }.cardStyle() }.buttonStyle(.plain)
                                 }
                             }
                         }
@@ -204,14 +206,14 @@ struct UserGuideView: View {
             List {
                 Section("Quick start") {
                     GuideItem(icon: "1.circle.fill", title: "Start with This Week", detail: "Review the weekly budget, number of strong candidates, projected record, risk warnings and the five best opportunities. Use Refresh before making decisions.")
-                    GuideItem(icon: "2.circle.fill", title: "Review Picks", detail: "Open each matchup to compare the projected score, win probability, current market line and the factors that moved the forecast.")
-                    GuideItem(icon: "3.circle.fill", title: "Build the Bet Slip", detail: "Choose Validated or Speculative recommendations, confirm your strategy, review suggested stakes and replace estimated odds with the current bet365 price.")
+                    GuideItem(icon: "2.circle.fill", title: "Review Picks", detail: "Filter to Recommended or Needs Review, sort by opportunity, confidence or game time, then open a matchup to compare its game prediction, best available bet, market line and supporting factors.")
+                    GuideItem(icon: "3.circle.fill", title: "Build the Bet Slip", detail: "Choose Historically Validated or Model-Ranked recommendations, confirm your strategy, review suggested stakes and replace estimated odds with the current bet365 price.")
                     GuideItem(icon: "4.circle.fill", title: "Check the weekly outcome", detail: "Use the decision summary to review predicted wins, losses, total returned and net result before entering any wagers at the sportsbook.")
                 }
 
                 Section("Screen guide") {
                     GuideItem(icon: "calendar", title: "This Week", detail: "The betting command center. It surfaces the strongest opportunities, bankroll exposure, projected weekly record and warnings that need attention.")
-                    GuideItem(icon: "sportscourt.fill", title: "Picks", detail: "The complete matchup board with model scores, probabilities, market comparisons, conditions and projection explanations.")
+                    GuideItem(icon: "sportscourt.fill", title: "Picks", detail: "The sortable, filterable matchup board. Each card separates the predicted game winner from the best available wager and shows the market line with its home-team label.")
                     GuideItem(icon: "list.clipboard.fill", title: "Bet Slip", detail: "The planning workspace for recommendation mode, bankroll, weekly amount, strategy presets, singles, parlays, entered wagers and outcome totals.")
                     GuideItem(icon: "chart.line.uptrend.xyaxis", title: "Results", detail: "Historical grading, validation records, calibration and performance by market. Use this evidence to judge whether a recommendation type deserves trust.")
                     GuideItem(icon: "slider.horizontal.3", title: "Model & Data", detail: "Data freshness, coverage, source status and manual injury or quarterback adjustments. Resolve warnings here before relying on a projection.")
@@ -249,7 +251,7 @@ struct UserGuideView: View {
                     GuideItem(icon: "arrow.up.right.circle.fill", title: "Return target", detail: "Choose Steady, Balanced or Upside to control preference for steadier allocations versus higher-payout markets. Higher upside also means greater variance and does not imply better expected results.")
                     GuideItem(icon: "arrow.counterclockwise.circle.fill", title: "Reset to Recommended", detail: "Restores the balanced planning defaults: 35% risk and 40% return preference. It does not change the bankroll, weekly amount, wagers, or entered odds.")
                     GuideItem(icon: "lock.shield.fill", title: "Validated recommendations", detail: "Allocates money only when a market passes its historical sample and performance gate. If none qualifies, the validated recommendation remains $0 regardless of strategy settings.")
-                    GuideItem(icon: "eye.trianglebadge.exclamationmark", title: "Speculative recommendations", detail: "The Bet Slip segmented control reveals strong model edges that failed historical validation. They can receive suggested stakes, remain orange and explicitly marked Unvalidated, and do not gain credibility merely because speculative mode is enabled.")
+                    GuideItem(icon: "eye.trianglebadge.exclamationmark", title: "Model-ranked recommendations", detail: "The Bet Slip segmented control reveals this week’s strongest model edges even when they failed historical validation. They can receive suggested stakes, remain orange and explicitly marked Unvalidated, and do not gain credibility merely because this mode is enabled.")
                     GuideItem(icon: "square.stack.3d.up.fill", title: "Three parlay plans", detail: "Lower Variance uses two side/total legs, Balanced uses three diversified edges, and High Upside uses four legs with extra moneyline preference. Games are not repeated inside one parlay. Suggested stakes require validation unless you explicitly enable speculative recommendations.")
                     GuideItem(icon: "equal.square.fill", title: "Odds and returns", detail: "Every wager settles in one of two ways: a win returns the full stake plus profit, while a loss returns $0. The weekly outlook rounds the combined win probabilities to a projected win count, assigns those wins to the highest-probability selections, and totals their full returns. It is a scenario forecast, not a guarantee. Enter the exact American odds shown by your sportsbook because every displayed return changes with the price.")
                 }
@@ -601,11 +603,11 @@ struct BettingView: View {
                 Section("Recommendation set") {
                     Picker("Recommendation set", selection: $showUnvalidatedRecommendations) {
                         Text("Historically validated").tag(false)
-                        Text("Best available").tag(true)
+                        Text("Model-ranked picks").tag(true)
                     }
                     .pickerStyle(.segmented)
                     if showUnvalidatedRecommendations {
-                        Label("Best Available ranks this week’s strongest model opportunities even when their strategy has not passed historical validation. Historical evidence remains visible beside every pick.", systemImage: "scope")
+                        Label("Model-ranked picks are this week’s strongest model opportunities, even when their strategy has not passed historical validation. Historical evidence remains visible beside every pick.", systemImage: "scope")
                             .font(.callout).foregroundStyle(.orange)
                     } else {
                         Text("Off · only historically validated single bets and parlays can receive suggested amounts.")
@@ -687,7 +689,7 @@ struct BettingView: View {
                     }
                 }
 
-                Section(showUnvalidatedRecommendations ? "Best available weekly plan" : "Historically validated weekly plan") {
+                Section(showUnvalidatedRecommendations ? "Model-ranked weekly plan" : "Historically validated weekly plan") {
                     if currentAllocations.isEmpty {
                         Label(showUnvalidatedRecommendations ? "$0 · matchup or market data unavailable" : "$0 · no market passes validation",
                               systemImage: showUnvalidatedRecommendations ? "eye.slash.fill" : "lock.shield.fill")
@@ -707,7 +709,7 @@ struct BettingView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(allocation.recommendation.selection).fontWeight(.semibold)
-                                    Text("\(allocation.matchup) · \(allocation.recommendation.kind.rawValue) · \(allocationValidated ? "Historically validated" : "Best available · unvalidated")")
+                                    Text("\(allocation.matchup) · \(allocation.recommendation.kind.rawValue) · \(allocationValidated ? "Historically validated" : "Model-ranked · unvalidated")")
                                         .font(.caption).foregroundStyle(allocationValidated ? Color.secondary : Color.orange)
                                     Text("\(allocation.odds.formatted(.number.sign(strategy: .always()))) odds · Model chance: \(allocation.modelWinProbability.formatted(.percent.precision(.fractionLength(0)))) win · \((1 - allocation.modelWinProbability).formatted(.percent.precision(.fractionLength(0)))) loss")
                                         .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
@@ -735,7 +737,7 @@ struct BettingView: View {
                         }
                         let predictedNet = predictedReturned - totalStake
                         VStack(spacing: 5) {
-                            LabeledContent(showUnvalidatedRecommendations ? "Total best-available stake" : "Total validated stake",
+                            LabeledContent(showUnvalidatedRecommendations ? "Total model-ranked stake" : "Total validated stake",
                                            value: totalStake.formatted(.currency(code: "USD")))
                             LabeledContent("Anticipated profit if every bet wins",
                                            value: totalProfit.formatted(.currency(code: "USD")))
@@ -864,7 +866,7 @@ struct BettingView: View {
                     if validatedKinds.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Label("No strategy has passed historical validation", systemImage: "shield.lefthalf.filled").font(.title3.bold()).foregroundStyle(.orange)
-                            Text("This does not suppress the Best Available plan. It means the recommendations are model-ranked opinions rather than historically proven betting systems.").foregroundStyle(.secondary)
+                            Text("This does not suppress the Model-Ranked plan. It means the recommendations are model-ranked opinions rather than historically proven betting systems.").foregroundStyle(.secondary)
                         }.padding(.vertical, 8)
                     }
                     Picker("Market", selection: $filter) {
@@ -897,7 +899,12 @@ struct BettingView: View {
                                     Text(recommendation.kind == .moneyline
                                          ? "Evidence: \(evidence.graded) strong-edge samples · \(evidence.returnOnStake.formatted(.percent.precision(.fractionLength(1)))) return"
                                          : "Evidence: \(evidence.graded) strong-edge samples · \(evidence.winRate.formatted(.percent.precision(.fractionLength(1)))) wins")
-                                        .font(.caption2).foregroundStyle(.tertiary)
+                                        .font(.caption2)
+                                        .foregroundStyle(evidence.returnOnStake < 0 ? Color.red : Color.secondary)
+                                    if evidence.returnOnStake < 0 && recommendation.strength != .pass {
+                                        Label("The model likes this matchup, but this market strategy has not produced a positive historical return.", systemImage: "exclamationmark.triangle.fill")
+                                            .font(.caption2.bold()).foregroundStyle(.red)
+                                    }
                                     HStack {
                                         Text("My wager").font(.caption).foregroundStyle(.secondary)
                                         Spacer()
@@ -968,17 +975,55 @@ private struct OddsReturnRow: View {
 }
 
 struct PredictionsView: View {
+    private enum PickFilter: String, CaseIterable { case all = "All games", recommended = "Recommended", review = "Needs review" }
+    private enum PickSort: String, CaseIterable { case opportunity = "Best opportunity", confidence = "Confidence", kickoff = "Game time" }
     let predictions: [Prediction]
     let season: Int
     let week: Int
     let feedStatus: String
     let isRefreshing: Bool
     let refresh: () -> Void
+    @State private var filter: PickFilter = .all
+    @State private var sort: PickSort = .opportunity
+
+    private func opportunityScore(_ prediction: Prediction) -> Double {
+        prediction.bettingRecommendations.filter { $0.strength != .pass }.map(\.edge).max() ?? -1
+    }
+
+    private var displayedPredictions: [Prediction] {
+        predictions.filter { prediction in
+            switch filter {
+            case .all: true
+            case .recommended: prediction.bettingRecommendations.contains { $0.strength == .strong }
+            case .review: prediction.reviewFlag != nil
+            }
+        }.sorted { lhs, rhs in
+            switch sort {
+            case .opportunity: opportunityScore(lhs) > opportunityScore(rhs)
+            case .confidence: lhs.confidence > rhs.confidence
+            case .kickoff: lhs.matchup.kickoff < rhs.matchup.kickoff
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 14) {
-                    ForEach(predictions) { prediction in
+                    HStack(spacing: 12) {
+                        Picker("Show", selection: $filter) {
+                            ForEach(PickFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        }.pickerStyle(.segmented)
+                        Picker("Sort", selection: $sort) {
+                            ForEach(PickSort.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        }.frame(width: 190)
+                    }
+                    .padding(12).background(.background, in: RoundedRectangle(cornerRadius: 12))
+
+                    if displayedPredictions.isEmpty {
+                        ContentUnavailableView("No matching games", systemImage: "line.3.horizontal.decrease.circle", description: Text("Choose another filter to review this week’s matchups."))
+                    }
+                    ForEach(displayedPredictions) { prediction in
                         NavigationLink { MatchupDetail(prediction: prediction) } label: {
                             MatchupCard(prediction: prediction)
                         }.buttonStyle(.plain)
@@ -1375,6 +1420,10 @@ private struct TeamMark: View {
 struct MatchupCard: View {
     let prediction: Prediction
     private var awayWins: Bool { prediction.predictedWinner.abbreviation == prediction.matchup.away.abbreviation }
+    private var bestBet: BetRecommendation? {
+        let actionable = prediction.bettingRecommendations.filter { $0.strength != .pass }
+        return actionable.max { $0.edge < $1.edge }
+    }
     var body: some View {
         VStack(spacing: 14) {
             HStack {
@@ -1386,6 +1435,19 @@ struct MatchupCard: View {
                     .padding(.horizontal, 9).padding(.vertical, 5)
                     .foregroundStyle(AppTheme.confidence(prediction.confidence))
                     .background(AppTheme.confidence(prediction.confidence).opacity(0.12), in: Capsule())
+            }
+            HStack {
+                Label("Game prediction", systemImage: "sportscourt.fill")
+                    .font(.caption.bold()).foregroundStyle(.secondary)
+                Text("\(prediction.predictedWinner.abbreviation) · \(prediction.confidence.formatted(.percent.precision(.fractionLength(0)))) win confidence")
+                    .font(.caption)
+                Spacer()
+                if let bestBet {
+                    Text("Best bet: \(bestBet.selection)")
+                        .font(.caption.bold()).foregroundStyle(bestBet.strength == .strong ? Color.green : Color.orange)
+                } else {
+                    Text("Best bet: Pass").font(.caption.bold()).foregroundStyle(.secondary)
+                }
             }
             HStack(spacing: 18) {
                 TeamMark(abbreviation: prediction.matchup.away.abbreviation, highlighted: awayWins)
@@ -1411,7 +1473,7 @@ struct MatchupCard: View {
             Divider()
             HStack(spacing: 18) {
                 if let line = prediction.matchup.bettingLine {
-                    if let spread = line.homeSpread { Label("Market \(spread.formatted(.number.sign(strategy: .always()).precision(.fractionLength(1))))", systemImage: "arrow.left.and.right") }
+                    if let spread = line.homeSpread { Label("\(prediction.matchup.home.abbreviation) \(spread.formatted(.number.sign(strategy: .always()).precision(.fractionLength(1))))", systemImage: "arrow.left.and.right") }
                     if let total = line.total { Label("O/U \(total.formatted(.number.precision(.fractionLength(1))))", systemImage: "sum") }
                 } else { Label("Line pending", systemImage: "clock") }
                 Spacer()
