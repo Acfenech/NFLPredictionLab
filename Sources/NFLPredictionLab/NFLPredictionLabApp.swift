@@ -253,7 +253,7 @@ struct UserGuideView: View {
                     GuideItem(icon: "lock.shield.fill", title: "Validated recommendations", detail: "Allocates money only when a market passes its historical sample and performance gate. If none qualifies, the validated recommendation remains $0 regardless of strategy settings.")
                     GuideItem(icon: "eye.trianglebadge.exclamationmark", title: "Model-ranked recommendations", detail: "The Bet Slip segmented control reveals this week’s strongest model edges even when they failed historical validation. They can receive suggested stakes, remain orange and explicitly marked Unvalidated, and do not gain credibility merely because this mode is enabled.")
                     GuideItem(icon: "square.stack.3d.up.fill", title: "Three parlay plans", detail: "Lower Variance uses two side/total legs, Balanced uses three diversified edges, and High Upside uses four legs with extra moneyline preference. Games are not repeated inside one parlay. Suggested stakes require validation unless you explicitly enable speculative recommendations.")
-                    GuideItem(icon: "person.crop.circle.badge.plus", title: "Player parlay builder", detail: "Sunday cloud refreshes import consensus passing, rushing, receiving and reception props from The Odds API. Add consensus legs or enter a prop manually, then replace the price with the exact Bet365 odds. These are market and payout comparisons until player projections and historical prop validation are complete.")
+                    GuideItem(icon: "person.crop.circle.badge.plus", title: "Player Parlays", detail: "Open Bet Slip, then Player Parlays to compare three ready-made plans: Lower Variance, Balanced and High Upside. Expand a plan to review every leg, tap Use This Parlay, and replace the consensus line and combined price with the exact Bet365 offer. Search and filter the 1,700+ imported props when building your own. These recommendations rank market availability, price and diversification; they are not yet backed by a validated player-performance projection model.")
                     GuideItem(icon: "equal.square.fill", title: "Odds and returns", detail: "Every wager settles in one of two ways: a win returns the full stake plus profit, while a loss returns $0. The weekly outlook rounds the combined win probabilities to a projected win count, assigns those wins to the highest-probability selections, and totals their full returns. It is a scenario forecast, not a guarantee. Enter the exact American odds shown by your sportsbook because every displayed return changes with the price.")
                 }
 
@@ -460,7 +460,8 @@ private struct SubmittedCurrencyEditor: View {
 struct BettingView: View {
     private enum BettingTab: String, CaseIterable {
         case plan = "Weekly Plan"
-        case parlays = "Parlays"
+        case playerParlays = "Player Parlays"
+        case gameParlays = "Game Parlays"
         case markets = "All Markets"
     }
     let predictions: [Prediction]
@@ -478,6 +479,8 @@ struct BettingView: View {
     @State private var playerPropSelection = ""
     @State private var playerPropOdds = -110
     @State private var playerPropLegs: [ManualPlayerPropLeg] = []
+    @State private var playerPropSearch = ""
+    @State private var playerPropMarket = "All"
 
     init(predictions: [Prediction], grades: [GradedPrediction], bankroll: BankrollStore) {
         self.predictions = predictions
@@ -526,6 +529,14 @@ struct BettingView: View {
                 if lhs.bookmakers != rhs.bookmakers { return lhs.bookmakers > rhs.bookmakers }
                 return lhs.player < rhs.player
             }
+    }
+    private var filteredPlayerProps: [PlayerPropQuote] {
+        availablePlayerProps.filter { quote in
+            let matchesMarket = playerPropMarket == "All" || quote.marketName == playerPropMarket
+            let needle = playerPropSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+            let matchesSearch = needle.isEmpty || quote.player.localizedCaseInsensitiveContains(needle)
+            return matchesMarket && matchesSearch
+        }
     }
     private var recommendedPlayerParlays: [RecommendedPlayerParlay] {
         let candidates = predictions.flatMap { prediction in
@@ -664,7 +675,10 @@ struct BettingView: View {
             VStack(spacing: 0) {
                 Picker("Bet Slip section", selection: $selectedTab) {
                     ForEach(BettingTab.allCases, id: \.self) { tab in
-                        Text(tab == .plan ? "Weekly Plan · \(currentAllocations.count)" : tab == .parlays ? "Parlays · \(currentParlayPlans.count + (playerPropLegs.count >= 2 ? 1 : 0))" : "All Markets · \(predictions.count)")
+                        Text(tab == .plan ? "Weekly Plan · \(currentAllocations.count)" :
+                             tab == .playerParlays ? "Player Parlays · 3" :
+                             tab == .gameParlays ? "Game Parlays · \(currentParlayPlans.count)" :
+                             "All Markets · \(predictions.count)")
                             .tag(tab)
                     }
                 }
@@ -802,7 +816,7 @@ struct BettingView: View {
                                         .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
                                     Text("WIN → \(totalReturn.formatted(.currency(code: "USD"))) returned (+\(profit.formatted(.currency(code: "USD")))) · LOSS → $0 returned (-\(allocation.amount.formatted(.currency(code: "USD"))))")
                                         .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
-                                    Label(predictedToWin ? "Predicted WIN this week · \(totalReturn.formatted(.currency(code: "USD"))) returned" : "Predicted LOSS this week · $0 returned",
+                                    Label(predictedToWin ? "Illustrative scenario: WIN · \(totalReturn.formatted(.currency(code: "USD"))) returned" : "Illustrative scenario: LOSS · $0 returned",
                                           systemImage: predictedToWin ? "checkmark.circle.fill" : "xmark.circle.fill")
                                         .font(.caption2.bold()).foregroundStyle(predictedToWin ? Color.green : Color.red).monospacedDigit()
                                 }
@@ -852,7 +866,7 @@ struct BettingView: View {
                 }
                 }
 
-                if selectedTab == .parlays {
+                if selectedTab == .gameParlays {
                 Section(showUnvalidatedRecommendations ? "Three speculative parlay plans" : "Three parlay plans") {
                     let fundableParlayProbabilities = currentParlayPlans.filter { $0.isFundable(showingUnvalidated: showUnvalidatedRecommendations) }
                     let predictedParlayWinCount = min(fundableParlayProbabilities.count, max(0, Int(fundableParlayProbabilities.map { $0.legs.map(\.modelWinProbability).reduce(1, *) }.reduce(0, +).rounded())))
@@ -908,7 +922,7 @@ struct BettingView: View {
                                  : "WIN → \(suggestedReturn.formatted(.currency(code: "USD"))) returned (+\(suggestedProfit.formatted(.currency(code: "USD")))) · LOSS → $0 returned (-\(suggestedStake.formatted(.currency(code: "USD"))))")
                                 .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                             if !parlay.legs.isEmpty {
-                                Label(predictedToWin ? "Predicted WIN this week · \(suggestedReturn.formatted(.currency(code: "USD"))) returned" : "Predicted LOSS this week · $0 returned",
+                                Label(predictedToWin ? "Illustrative scenario: WIN · \(suggestedReturn.formatted(.currency(code: "USD"))) returned" : "Illustrative scenario: LOSS · $0 returned",
                                       systemImage: predictedToWin ? "checkmark.circle.fill" : "xmark.circle.fill")
                                     .font(.caption.bold()).foregroundStyle(predictedToWin ? Color.green : Color.red).monospacedDigit()
                             }
@@ -960,6 +974,9 @@ struct BettingView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
+                }
+
+                if selectedTab == .playerParlays {
                 Section("Player parlay builder") {
                     Label("Consensus player props come from The Odds API. Replace the displayed consensus price with the exact Bet365 line before placing a wager.", systemImage: "person.crop.circle.badge.plus")
                         .font(.caption).foregroundStyle(.secondary)
@@ -967,11 +984,47 @@ struct BettingView: View {
                         Label("No synced player props yet. The scheduled worker fetches them on Sunday, or during a manual workflow run.", systemImage: "clock.arrow.circlepath")
                             .font(.caption).foregroundStyle(.orange)
                     } else {
+                        let suggestedExposure = min(bankroll.weeklyBudget, bankroll.bankroll) * recommendedPlayerParlays.map(\.budgetShare).reduce(0, +)
+                        HStack(spacing: 24) {
+                            LabeledContent("Recommended plans", value: "3")
+                            LabeledContent("Suggested exposure", value: suggestedExposure.formatted(.currency(code: "USD")))
+                            LabeledContent("Available markets", value: availablePlayerProps.count.formatted())
+                        }
+                        .font(.callout.weight(.semibold)).monospacedDigit()
                         ForEach(recommendedPlayerParlays) { parlay in
                             let combinedOdds = OddsMath.parlayAmerican(parlay.legs.map(\.quote.odds)) ?? 100
                             let suggestedStake = min(bankroll.weeklyBudget, bankroll.bankroll) * parlay.budgetShare
                             let totalReturn = OddsMath.totalReturn(stake: suggestedStake, american: combinedOdds) ?? 0
-                            VStack(alignment: .leading, spacing: 8) {
+                            DisclosureGroup {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(Array(parlay.legs.enumerated()), id: \.element.id) { index, candidate in
+                                        HStack(alignment: .firstTextBaseline) {
+                                            Text("\(index + 1)").font(.caption.bold()).foregroundStyle(.secondary)
+                                            VStack(alignment: .leading, spacing: 1) {
+                                                Text("\(candidate.quote.player) · Over \(candidate.quote.point.formatted(.number.precision(.fractionLength(1)))) \(candidate.quote.marketName)")
+                                                    .fontWeight(.semibold)
+                                                Text("\(candidate.matchup) · \(candidate.quote.bookmakers) books · \(candidate.quote.odds.formatted(.number.sign(strategy: .always())))")
+                                                    .font(.caption).foregroundStyle(.secondary)
+                                            }
+                                        }
+                                    }
+                                    HStack {
+                                        Text("Illustrative stake \(suggestedStake.formatted(.currency(code: "USD"))) · win → \(totalReturn.formatted(.currency(code: "USD"))) returned")
+                                            .font(.caption).monospacedDigit()
+                                        Spacer()
+                                        Button("Use This Parlay") {
+                                            playerPropLegs = parlay.legs.map { candidate in
+                                                ManualPlayerPropLeg(
+                                                    player: candidate.quote.player,
+                                                    selection: "Over \(candidate.quote.point.formatted(.number.precision(.fractionLength(1)))) \(candidate.quote.marketName)",
+                                                    odds: candidate.quote.odds
+                                                )
+                                            }
+                                            bankroll.manualStakes["player-prop-parlay"] = suggestedStake
+                                        }.buttonStyle(.borderedProminent)
+                                    }
+                                }.padding(.top, 6)
+                            } label: {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(parlay.title).font(.headline)
@@ -980,40 +1033,22 @@ struct BettingView: View {
                                     Spacer()
                                     Text(combinedOdds.formatted(.number.sign(strategy: .always())))
                                         .font(.headline.monospacedDigit())
-                                }
-                                ForEach(Array(parlay.legs.enumerated()), id: \.element.id) { index, candidate in
-                                    HStack(alignment: .firstTextBaseline) {
-                                        Text("\(index + 1)").font(.caption.bold()).foregroundStyle(.secondary)
-                                        VStack(alignment: .leading, spacing: 1) {
-                                            Text("\(candidate.quote.player) · Over \(candidate.quote.point.formatted(.number.precision(.fractionLength(1)))) \(candidate.quote.marketName)")
-                                                .fontWeight(.semibold)
-                                            Text("\(candidate.matchup) · \(candidate.quote.bookmakers) books · \(candidate.quote.odds.formatted(.number.sign(strategy: .always())))")
-                                                .font(.caption).foregroundStyle(.secondary)
-                                        }
-                                    }
-                                }
-                                HStack {
-                                    Text("Suggested \(suggestedStake.formatted(.currency(code: "USD"))) · wins → \(totalReturn.formatted(.currency(code: "USD"))) returned")
-                                        .font(.caption).monospacedDigit()
-                                    Spacer()
-                                    Button("Use This Parlay") {
-                                        playerPropLegs = parlay.legs.map { candidate in
-                                            ManualPlayerPropLeg(
-                                                player: candidate.quote.player,
-                                                selection: "Over \(candidate.quote.point.formatted(.number.precision(.fractionLength(1)))) \(candidate.quote.marketName)",
-                                                odds: candidate.quote.odds
-                                            )
-                                        }
-                                        bankroll.manualStakes["player-prop-parlay"] = suggestedStake
-                                    }.buttonStyle(.borderedProminent)
+                                    Text("\(suggestedStake.formatted(.currency(code: "USD"))) stake · \(totalReturn.formatted(.currency(code: "USD"))) return")
+                                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                                 }
                             }
-                            .padding(.vertical, 6)
+                            .padding(.vertical, 4)
                         }
                         Text("These three parlays are ranked by market availability, price and diversification—not by a validated player-performance model. Confirm every line and combined price in Bet365 before wagering.")
                             .font(.caption).foregroundStyle(.orange)
-                        DisclosureGroup("Available consensus props · \(availablePlayerProps.count)") {
-                            ForEach(Array(availablePlayerProps.prefix(30))) { quote in
+                        DisclosureGroup("Browse consensus props · \(filteredPlayerProps.count) of \(availablePlayerProps.count)") {
+                            HStack {
+                                TextField("Search player", text: $playerPropSearch)
+                                Picker("Market", selection: $playerPropMarket) {
+                                    ForEach(["All", "Passing yards", "Rushing yards", "Receiving yards", "Receptions"], id: \.self) { Text($0).tag($0) }
+                                }.frame(width: 190)
+                            }
+                            ForEach(Array(filteredPlayerProps.prefix(40))) { quote in
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(quote.player).fontWeight(.semibold)
