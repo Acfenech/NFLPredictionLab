@@ -240,7 +240,8 @@ struct WeeklyDashboardView: View {
             var games = Set<String>()
             return source.filter { games.insert($0.prediction.matchup.gameKey).inserted }.prefix(count).map { $0 }
         }
-        let lower = uniqueGames(candidates.filter { $0.recommendation.kind != .moneyline }
+        let lowerCandidates = candidates.filter { $0.recommendation.kind != .moneyline }
+        let lower = uniqueGames((lowerCandidates.isEmpty ? strongestBets.filter { $0.recommendation.kind != .moneyline } : lowerCandidates)
             .sorted { $0.recommendation.edge > $1.recommendation.edge }, count: 2)
         let balanced = uniqueGames(candidates.sorted {
             $0.recommendation.edge * ($0.recommendation.kind == .moneyline ? 0.85 : 1) >
