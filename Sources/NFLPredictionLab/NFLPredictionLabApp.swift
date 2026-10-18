@@ -103,6 +103,53 @@ private struct DestinationRow: View {
     var body: some View { Label(destination.rawValue, systemImage: destination.icon).tag(destination) }
 }
 
+private struct DashboardWagerCard: View {
+    let title: String
+    let category: String
+    let detail: String
+    let rationale: String
+    let stake: Double
+    let odds: Int
+    let probability: Double
+    let tint: Color
+    let badge: String?
+
+    var body: some View {
+        let profit = OddsMath.profit(stake: stake, american: odds) ?? 0
+        let totalReturn = OddsMath.totalReturn(stake: stake, american: odds) ?? 0
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(title).font(.headline)
+                    Text(category.uppercased())
+                        .font(.caption2.bold()).foregroundStyle(tint)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(tint.opacity(0.12), in: Capsule())
+                    if let badge {
+                        Label(badge, systemImage: "star.fill")
+                            .font(.caption2.bold()).foregroundStyle(.white)
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(AppTheme.accent, in: Capsule())
+                    }
+                }
+                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Text(rationale).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Text("WIN → \(totalReturn.formatted(.currency(code: "USD"))) returned (+\(profit.formatted(.currency(code: "USD")))) · LOSS → $0 returned (-\(stake.formatted(.currency(code: "USD"))))")
+                    .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+            }
+            Spacer(minLength: 12)
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(stake.formatted(.currency(code: "USD"))).font(.title3.bold()).monospacedDigit()
+                Text("suggested stake").font(.caption2).foregroundStyle(.secondary)
+                Text(odds.formatted(.number.sign(strategy: .always()))).font(.headline.monospacedDigit())
+                Text("\(probability.formatted(.percent.precision(.fractionLength(1)))) win estimate")
+                    .font(.caption2).foregroundStyle(tint).monospacedDigit()
+            }
+        }
+        .cardStyle()
+    }
+}
+
 struct WeeklyDashboardView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var bankroll: BankrollStore
@@ -138,6 +185,19 @@ struct WeeklyDashboardView: View {
         return strong.isEmpty ? Array(ranked.prefix(5)) : Array(strong.prefix(5))
     }
     private var projectedWins: Int { Int(strongestBets.map(\.probability).reduce(0, +).rounded()) }
+    private var fundedWeeklyAmount: Double { min(max(0, bankroll.weeklyBudget), max(0, bankroll.bankroll)) }
+    private func defaultOdds(for item: (prediction: Prediction, recommendation: BetRecommendation, probability: Double)) -> Int {
+        guard item.recommendation.kind == .moneyline, let line = item.prediction.matchup.bettingLine else { return -110 }
+        return item.recommendation.selection.hasPrefix(item.prediction.matchup.home.abbreviation)
+            ? (line.homeMoneyline ?? -110) : (line.awayMoneyline ?? -110)
+    }
+    private var singleStakes: [String: Double] {
+        let weights = strongestBets.map { max(0.1, $0.recommendation.edge) }
+        let total = weights.reduce(0, +)
+        return Dictionary(uniqueKeysWithValues: zip(strongestBets, weights).map { item, weight in
+            ("\(item.prediction.matchup.gameKey)-\(item.recommendation.id)", total > 0 ? fundedWeeklyAmount * 0.75 * weight / total : 0)
+        })
+    }
     private var dashboardGameParlays: [(title: String, legs: ArraySlice<(prediction: Prediction, recommendation: BetRecommendation, probability: Double)>, share: Double)] {
         let candidates = strongestBets
         return [
@@ -198,66 +258,49 @@ struct WeeklyDashboardView: View {
                             if strongestBets.isEmpty {
                                 ContentUnavailableView("Recommendations are loading", systemImage: "arrow.clockwise", description: Text("The complete weekly plan will appear after matchup and market data arrive."))
                             } else {
-                                ForEach(Array(strongestBets.enumerated()), id: \.offset) { _, item in
-                                    Button { navigate(.forecasts) } label: { HStack(spacing: 14) {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            HStack {
-                                                Text(item.recommendation.selection).font(.headline)
-                                                Text(validatedKinds.contains(item.recommendation.kind) ? "VALIDATED" : "SPECULATIVE")
-                                                    .font(.caption2.bold())
-                                                    .foregroundStyle(validatedKinds.contains(item.recommendation.kind) ? Color.green : Color.orange)
-                                                    .padding(.horizontal, 7).padding(.vertical, 3)
-                                                    .background((validatedKinds.contains(item.recommendation.kind) ? Color.green : Color.orange).opacity(0.12), in: Capsule())
-                                            }
-                                            Text("\(item.prediction.matchup.away.abbreviation) at \(item.prediction.matchup.home.abbreviation) · \(item.recommendation.kind.rawValue)").font(.caption).foregroundStyle(.secondary)
-                                            Text(item.recommendation.rationale).font(.caption).foregroundStyle(.secondary)
-                                        }
-                                        Spacer()
-                                        VStack(alignment: .trailing, spacing: 3) {
-                                            Text(item.probability.formatted(.percent.precision(.fractionLength(0)))).font(.title3.bold()).foregroundStyle(AppTheme.accent)
-                                            Text("bet win estimate").font(.caption2).foregroundStyle(.secondary)
-                                            Label("Open matchup", systemImage: "chevron.right")
-                                                .font(.caption2).foregroundStyle(.secondary)
-                                        }
-                                    }.cardStyle() }.buttonStyle(.plain)
+                                ForEach(Array(strongestBets.enumerated()), id: \.offset) { index, item in
+                                    let key = "\(item.prediction.matchup.gameKey)-\(item.recommendation.id)"
+                                    Button { navigate(.bets) } label: {
+                                        DashboardWagerCard(
+                                            title: item.recommendation.selection,
+                                            category: "Single · \(item.recommendation.kind.rawValue)",
+                                            detail: "\(item.prediction.matchup.away.abbreviation) at \(item.prediction.matchup.home.abbreviation)",
+                                            rationale: item.recommendation.rationale,
+                                            stake: singleStakes[key] ?? 0,
+                                            odds: defaultOdds(for: item),
+                                            probability: item.probability,
+                                            tint: validatedKinds.contains(item.recommendation.kind) ? .green : .orange,
+                                            badge: index == 0 ? "BEST BET" : nil
+                                        )
+                                    }.buttonStyle(.plain)
                                 }
                             }
                             ForEach(Array(dashboardGameParlays.enumerated()), id: \.offset) { _, parlay in
+                                let odds = OddsMath.parlayAmerican(parlay.legs.map { defaultOdds(for: $0) }) ?? 100
+                                let probability = parlay.legs.map(\.probability).reduce(1, *)
+                                let stake = fundedWeeklyAmount * parlay.share
                                 Button { navigate(.bets) } label: {
-                                    HStack(spacing: 14) {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            HStack {
-                                                Text(parlay.title).font(.headline)
-                                                Text("GAME PARLAY").font(.caption2.bold()).foregroundStyle(.purple)
-                                                    .padding(.horizontal, 7).padding(.vertical, 3)
-                                                    .background(Color.purple.opacity(0.12), in: Capsule())
-                                            }
-                                            Text(parlay.legs.map { $0.recommendation.selection }.joined(separator: " + "))
-                                                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                                        }
-                                        Spacer()
-                                        Text((min(bankroll.weeklyBudget, bankroll.bankroll) * parlay.share).formatted(.currency(code: "USD")))
-                                            .font(.title3.bold()).monospacedDigit()
-                                    }.cardStyle()
+                                    DashboardWagerCard(
+                                        title: parlay.title, category: "Game Parlay",
+                                        detail: parlay.legs.map { $0.recommendation.selection }.joined(separator: " + "),
+                                        rationale: "Diversified model-ranked selections from separate games.",
+                                        stake: stake, odds: odds, probability: probability,
+                                        tint: .purple, badge: nil
+                                    )
                                 }.buttonStyle(.plain)
                             }
                             ForEach(Array(dashboardPlayerParlays.enumerated()), id: \.offset) { _, parlay in
+                                let odds = OddsMath.parlayAmerican(parlay.legs.map(\.odds)) ?? 100
+                                let probability = parlay.legs.compactMap { OddsMath.impliedProbability(american: $0.odds) }.reduce(1, *)
+                                let stake = fundedWeeklyAmount * parlay.share
                                 Button { navigate(.bets) } label: {
-                                    HStack(spacing: 14) {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            HStack {
-                                                Text(parlay.title).font(.headline)
-                                                Text("PLAYER PARLAY").font(.caption2.bold()).foregroundStyle(.blue)
-                                                    .padding(.horizontal, 7).padding(.vertical, 3)
-                                                    .background(Color.blue.opacity(0.12), in: Capsule())
-                                            }
-                                            Text(parlay.legs.map { "\($0.player) \($0.selection) \($0.point.formatted(.number.precision(.fractionLength(1))))" }.joined(separator: " + "))
-                                                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                                        }
-                                        Spacer()
-                                        Text((min(bankroll.weeklyBudget, bankroll.bankroll) * parlay.share).formatted(.currency(code: "USD")))
-                                            .font(.title3.bold()).monospacedDigit()
-                                    }.cardStyle()
+                                    DashboardWagerCard(
+                                        title: parlay.title, category: "Player Parlay",
+                                        detail: parlay.legs.map { "\($0.player) \($0.selection) \($0.point.formatted(.number.precision(.fractionLength(1))))" }.joined(separator: " + "),
+                                        rationale: "Consensus player-prop combination ranked by market coverage and price.",
+                                        stake: stake, odds: odds, probability: probability,
+                                        tint: .blue, badge: nil
+                                    )
                                 }.buttonStyle(.plain)
                             }
                         }
