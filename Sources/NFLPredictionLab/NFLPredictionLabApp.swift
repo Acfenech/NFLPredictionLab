@@ -266,7 +266,7 @@ struct UserGuideView: View {
                     GuideItem(icon: "star.fill", title: "Best Bet This Week", detail: "The highest model edge in the current weekly plan is promoted for quick review. Compare its model probability with the sportsbook-implied probability, read the rationale, then complete the pre-bet checklist. Best Bet means highest-ranked—not guaranteed.")
                     GuideItem(icon: "checklist", title: "Pre-bet checklist", detail: "Before placing a wager, enter the exact Bet365 price, confirm weekly exposure remains inside the budget, check that forecast data are current, and note whether the market has passed its historical grade. An incomplete item is a warning for review, not an automatic prediction of failure.")
                     GuideItem(icon: "square.stack.3d.up.fill", title: "Three parlay plans", detail: "Lower Variance uses two side/total legs, Balanced uses three diversified edges, and High Upside uses four legs with extra moneyline preference. Games are not repeated inside one parlay. Suggested stakes require validation unless you explicitly enable speculative recommendations.")
-                    GuideItem(icon: "person.crop.circle.badge.plus", title: "Player Parlays", detail: "Open Bet Slip, then Player Parlays to compare three ready-made plans: Lower Variance, Balanced and High Upside. Expand a plan to review every leg, tap Use This Parlay, and replace the consensus line and combined price with the exact Bet365 offer. Search and filter the 1,700+ imported props when building your own. These recommendations rank market availability, price and diversification; they are not yet backed by a validated player-performance projection model.")
+                    GuideItem(icon: "person.crop.circle.badge.plus", title: "Player Parlays", detail: "Open Bet Slip, then Player Parlays to compare Lower Variance, Balanced and High Upside plans. The ranker evaluates available Over and Under prices, removes estimated vig using the opposing side, scores freshness and sportsbook coverage, and searches diversified cross-game combinations. Expand a plan to review each leg’s no-vig probability, then replace every line and combined price with the exact Bet365 offer. These are top market-ranked combinations, not validated player-performance projections.")
                     GuideItem(icon: "equal.square.fill", title: "Odds and returns", detail: "Every wager settles in one of two ways: a win returns the full stake plus profit, while a loss returns $0. The weekly outlook rounds the combined win probabilities to a projected win count, assigns those wins to the highest-probability selections, and totals their full returns. It is a scenario forecast, not a guarantee. Enter the exact American odds shown by your sportsbook because every displayed return changes with the price.")
                     GuideItem(icon: "chart.pie.fill", title: "Weekly exposure footer", detail: "The bottom bar changes with the selected Bet Slip tab and always shows total user-entered exposure against the funded weekly limit. Player Parlays displays its own suggested exposure and all-win return rather than repeating the singles scenario.")
                 }
@@ -407,6 +407,9 @@ private struct PlayerPropCandidate: Identifiable {
     let gameKey: String
     let matchup: String
     let quote: PlayerPropQuote
+    let fairProbability: Double
+    let estimatedHold: Double
+    let qualityScore: Double
 }
 
 private struct RecommendedPlayerParlay: Identifiable {
@@ -553,46 +556,77 @@ struct BettingView: View {
         }
     }
     private var recommendedPlayerParlays: [RecommendedPlayerParlay] {
-        let candidates = predictions.flatMap { prediction in
-            (prediction.playerProps ?? []).compactMap { quote -> PlayerPropCandidate? in
-                guard quote.selection.caseInsensitiveCompare("Over") == .orderedSame,
-                      quote.bookmakers >= 4, (-180...140).contains(quote.odds) else { return nil }
+        let candidates = predictions.flatMap { prediction -> [PlayerPropCandidate] in
+            let quotes = prediction.playerProps ?? []
+            return quotes.compactMap { quote in
+                guard quote.bookmakers >= 4, (-200...175).contains(quote.odds),
+                      let rawProbability = OddsMath.impliedProbability(american: quote.odds) else { return nil }
+                let oppositeName = quote.selection.caseInsensitiveCompare("Over") == .orderedSame ? "Under" : "Over"
+                guard let opposite = quotes.first(where: {
+                    $0.player == quote.player && $0.marketKey == quote.marketKey &&
+                    abs($0.point - quote.point) < 0.01 && $0.selection.caseInsensitiveCompare(oppositeName) == .orderedSame
+                }), let oppositeProbability = OddsMath.impliedProbability(american: opposite.odds) else { return nil }
+                let probabilityTotal = rawProbability + oppositeProbability
+                guard probabilityTotal > 0 else { return nil }
+                let fairProbability = rawProbability / probabilityTotal
+                let hold = max(0, probabilityTotal - 1)
+                let ageHours = quote.updatedAt.map { max(0, Date.now.timeIntervalSince($0) / 3_600) } ?? 24
+                let freshness = max(0.65, 1 - min(ageHours, 48) / 140)
+                let coverage = min(1, Double(quote.bookmakers) / 8)
+                let quality = fairProbability * 0.62 + coverage * 0.25 + freshness * 0.13 - hold * 0.30
                 return PlayerPropCandidate(
                     gameKey: prediction.matchup.gameKey,
                     matchup: "\(prediction.matchup.away.abbreviation) at \(prediction.matchup.home.abbreviation)",
-                    quote: quote
+                    quote: quote,
+                    fairProbability: fairProbability,
+                    estimatedHold: hold,
+                    qualityScore: quality
                 )
             }
-        }.sorted { lhs, rhs in
-            if lhs.quote.bookmakers != rhs.quote.bookmakers { return lhs.quote.bookmakers > rhs.quote.bookmakers }
-            return abs(lhs.quote.odds + 110) < abs(rhs.quote.odds + 110)
         }
 
-        func diversified(count: Int, offset: Int, preferUpside: Bool = false) -> [PlayerPropCandidate] {
-            let ordered = preferUpside
-                ? candidates.sorted { $0.quote.odds == $1.quote.odds ? $0.quote.bookmakers > $1.quote.bookmakers : $0.quote.odds > $1.quote.odds }
-                : Array(candidates.dropFirst(min(offset, candidates.count))) + Array(candidates.prefix(min(offset, candidates.count)))
-            var selected: [PlayerPropCandidate] = []
-            var players = Set<String>(), games = Set<String>()
-            for candidate in ordered where !players.contains(candidate.quote.player) && !games.contains(candidate.gameKey) {
-                selected.append(candidate)
-                players.insert(candidate.quote.player)
-                games.insert(candidate.gameKey)
-                if selected.count == count { break }
+        enum RankingMode { case lowerVariance, balanced, upside }
+        func bestCombination(count: Int, mode: RankingMode) -> [PlayerPropCandidate] {
+            let pool = Array(candidates.sorted { $0.qualityScore > $1.qualityScore }.prefix(32))
+            var best: [PlayerPropCandidate] = []
+            var bestScore = -Double.infinity
+            func legScore(_ candidate: PlayerPropCandidate) -> Double {
+                switch mode {
+                case .lowerVariance:
+                    return log(max(0.01, candidate.fairProbability)) * 1.8 + candidate.qualityScore
+                case .balanced:
+                    return log(max(0.01, candidate.fairProbability)) + candidate.qualityScore * 1.3
+                case .upside:
+                    let payout = candidate.quote.odds > 0 ? Double(candidate.quote.odds) / 100 : 100 / Double(-candidate.quote.odds)
+                    return log(max(0.01, candidate.fairProbability)) * 0.65 + log(1 + payout) * 0.55 + candidate.qualityScore
+                }
             }
-            return selected
+            func search(_ start: Int, _ chosen: [PlayerPropCandidate], _ players: Set<String>, _ games: Set<String>, _ score: Double) {
+                if chosen.count == count {
+                    if score > bestScore { bestScore = score; best = chosen }
+                    return
+                }
+                guard start < pool.count, pool.count - start >= count - chosen.count else { return }
+                for index in start..<pool.count {
+                    let candidate = pool[index]
+                    guard !players.contains(candidate.quote.player), !games.contains(candidate.gameKey) else { continue }
+                    search(index + 1, chosen + [candidate], players.union([candidate.quote.player]), games.union([candidate.gameKey]), score + legScore(candidate))
+                }
+            }
+            search(0, [], [], [], 0)
+            return best
         }
 
         let plans = [
             RecommendedPlayerParlay(id: "player-lower", title: "Lower Variance · 2 legs",
-                rationale: "Two widely posted overs from different players and games.",
-                legs: diversified(count: 2, offset: 0), budgetShare: 0.04),
+                rationale: "Top two no-vig probabilities with strong market coverage from separate games.",
+                legs: bestCombination(count: 2, mode: .lowerVariance), budgetShare: 0.04),
             RecommendedPlayerParlay(id: "player-balanced", title: "Balanced · 3 legs",
-                rationale: "Three consensus overs diversified across separate matchups.",
-                legs: diversified(count: 3, offset: 6), budgetShare: 0.025),
+                rationale: "Top combined price, coverage and no-vig probability across separate matchups.",
+                legs: bestCombination(count: 3, mode: .balanced), budgetShare: 0.025),
             RecommendedPlayerParlay(id: "player-upside", title: "High Upside · 4 legs",
-                rationale: "Four higher-return consensus overs with greater parlay variance.",
-                legs: diversified(count: 4, offset: 0, preferUpside: true), budgetShare: 0.015)
+                rationale: "Higher-payout sides that retain the strongest available market-quality scores.",
+                legs: bestCombination(count: 4, mode: .upside), budgetShare: 0.015)
         ]
         return plans.filter { !$0.legs.isEmpty }
     }
@@ -697,7 +731,7 @@ struct BettingView: View {
             return partial + (OddsMath.totalReturn(stake: stake, american: odds) ?? 0)
         }
         let playerParlayProbabilities = recommendedPlayerParlays.map { parlay in
-            (id: parlay.id, probability: OddsMath.impliedProbability(american: OddsMath.parlayAmerican(parlay.legs.map(\.quote.odds)) ?? 100) ?? 0)
+            (id: parlay.id, probability: parlay.legs.map(\.fairProbability).reduce(1, *))
         }
         let playerIllustrativeWinCount = min(playerParlayProbabilities.count,
             max(0, Int(playerParlayProbabilities.map(\.probability).reduce(0, +).rounded())))
@@ -1064,7 +1098,7 @@ struct BettingView: View {
                             .font(.caption).foregroundStyle(.orange)
                     } else {
                         HStack(spacing: 24) {
-                            LabeledContent("Recommended plans", value: "3")
+                            LabeledContent("Top-ranked plans", value: recommendedPlayerParlays.count.formatted())
                             LabeledContent("Suggested exposure", value: playerSuggestedExposure.formatted(.currency(code: "USD")))
                             LabeledContent("Available markets", value: availablePlayerProps.count.formatted())
                         }
@@ -1078,7 +1112,7 @@ struct BettingView: View {
                             let combinedOdds = OddsMath.parlayAmerican(parlay.legs.map(\.quote.odds)) ?? 100
                             let suggestedStake = min(bankroll.weeklyBudget, bankroll.bankroll) * parlay.budgetShare
                             let totalReturn = OddsMath.totalReturn(stake: suggestedStake, american: combinedOdds) ?? 0
-                            let impliedHitProbability = OddsMath.impliedProbability(american: combinedOdds) ?? 0
+                            let marketEstimatedHitProbability = parlay.legs.map(\.fairProbability).reduce(1, *)
                             let illustrativeWin = playerIllustrativeWinnerIDs.contains(parlay.id)
                             DisclosureGroup {
                                 VStack(alignment: .leading, spacing: 8) {
@@ -1088,7 +1122,7 @@ struct BettingView: View {
                                             VStack(alignment: .leading, spacing: 1) {
                                                 Text("\(candidate.quote.player) · Over \(candidate.quote.point.formatted(.number.precision(.fractionLength(1)))) \(candidate.quote.marketName)")
                                                     .fontWeight(.semibold)
-                                                Text("\(candidate.matchup) · \(candidate.quote.bookmakers) books · \(candidate.quote.odds.formatted(.number.sign(strategy: .always())))")
+                                                Text("\(candidate.matchup) · \(candidate.quote.bookmakers) books · \(candidate.quote.odds.formatted(.number.sign(strategy: .always()))) · \(candidate.fairProbability.formatted(.percent.precision(.fractionLength(1)))) no-vig")
                                                     .font(.caption).foregroundStyle(.secondary)
                                             }
                                         }
@@ -1108,7 +1142,7 @@ struct BettingView: View {
                                             bankroll.manualStakes["player-prop-parlay"] = suggestedStake
                                         }.buttonStyle(.borderedProminent)
                                     }
-                                    Label("Sportsbook-implied hit probability: \(impliedHitProbability.formatted(.percent.precision(.fractionLength(1)))) · not a model projection", systemImage: "percent")
+                                    Label("Market-estimated hit probability: \(marketEstimatedHitProbability.formatted(.percent.precision(.fractionLength(1)))) · vig removed · not a player model", systemImage: "percent")
                                         .font(.caption).foregroundStyle(.secondary)
                                     Label(illustrativeWin
                                           ? "Illustrative scenario: WIN · \(totalReturn.formatted(.currency(code: "USD"))) returned"
@@ -1142,7 +1176,7 @@ struct BettingView: View {
                         }
                         .fontWeight(.semibold)
                         .monospacedDigit()
-                        Text("These three parlays are ranked by market availability, price and diversification—not by a validated player-performance model. Confirm every line and combined price in Bet365 before wagering.")
+                        Text("The app evaluated both Over and Under sides with paired prices, estimated no-vig probability, freshness, sportsbook coverage, payout and cross-game diversification. These are the top market-ranked combinations currently available—not validated player-performance projections. Confirm every line and combined price in Bet365 before wagering.")
                             .font(.caption).foregroundStyle(.orange)
                         DisclosureGroup("Browse consensus props · \(filteredPlayerProps.count) of \(availablePlayerProps.count)") {
                             HStack {
