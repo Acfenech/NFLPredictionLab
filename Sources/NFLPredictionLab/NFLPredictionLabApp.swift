@@ -193,7 +193,10 @@ struct WeeklyDashboardView: View {
                 ranked.append((prediction: prediction, recommendation: recommendation, probability: probability))
             }
         }
-        ranked.sort { $0.recommendation.edge > $1.recommendation.edge }
+        ranked.sort {
+            ($0.recommendation.expectedValue ?? 0) + $0.recommendation.edge / 1_000 >
+            ($1.recommendation.expectedValue ?? 0) + $1.recommendation.edge / 1_000
+        }
         let strong = ranked.filter { $0.recommendation.strength == BetStrength.strong }
         return strong.isEmpty ? Array(ranked.prefix(5)) : Array(strong.prefix(5))
     }
@@ -203,19 +206,36 @@ struct WeeklyDashboardView: View {
         return "updated \(latestMarketUpdate.formatted(date: .abbreviated, time: .shortened))"
     }
     private func defaultOdds(for item: (prediction: Prediction, recommendation: BetRecommendation, probability: Double)) -> Int {
-        guard item.recommendation.kind == .moneyline, let line = item.prediction.matchup.bettingLine else { return -110 }
-        return item.recommendation.selection.hasPrefix(item.prediction.matchup.home.abbreviation)
+        let fallback: Int
+        if item.recommendation.kind == .moneyline, let line = item.prediction.matchup.bettingLine {
+            fallback = item.recommendation.selection.hasPrefix(item.prediction.matchup.home.abbreviation)
             ? (line.homeMoneyline ?? -110) : (line.awayMoneyline ?? -110)
+        } else { fallback = -110 }
+        return bankroll.odds(for: "\(item.prediction.matchup.gameKey)-\(item.recommendation.id)", default: fallback)
     }
     private var singleStakes: [String: Double] {
-        let weights = strongestBets.map { max(0.1, $0.recommendation.edge) }
+        let weights = strongestBets.map {
+            let concentration = pow(max(0.1, $0.recommendation.edge), 0.35 + bankroll.riskLevel * 1.65)
+            let upside = $0.recommendation.kind == .moneyline ? 1 + bankroll.returnLevel : 1 + bankroll.returnLevel * 0.2
+            return 2 * concentration * upside
+        }
         let total = weights.reduce(0, +)
         return Dictionary(uniqueKeysWithValues: zip(strongestBets, weights).map { item, weight in
             ("\(item.prediction.matchup.gameKey)-\(item.recommendation.id)", total > 0 ? fundedWeeklyAmount * 0.75 * weight / total : 0)
         })
     }
     private var dashboardGameParlays: [(id: String, title: String, legs: [(prediction: Prediction, recommendation: BetRecommendation, probability: Double)], share: Double)] {
-        let candidates = strongestBets
+        let candidates = model.predictions.flatMap { prediction in
+            prediction.bettingRecommendations.filter { $0.strength == .strong }.map { recommendation in
+                (prediction: prediction, recommendation: recommendation, probability: recommendation.estimatedWinProbability ?? {
+                    switch recommendation.kind {
+                    case .moneyline: return recommendation.selection.hasPrefix(prediction.matchup.home.abbreviation) ? prediction.homeWinProbability : 1 - prediction.homeWinProbability
+                    case .spread: return min(0.90, max(0.50, 1 / (1 + exp(-recommendation.edge / 7.0))))
+                    case .total: return min(0.90, max(0.50, 1 / (1 + exp(-recommendation.edge / 9.0))))
+                    }
+                }())
+            }
+        }
         func uniqueGames(_ source: [(prediction: Prediction, recommendation: BetRecommendation, probability: Double)], count: Int) -> [(prediction: Prediction, recommendation: BetRecommendation, probability: Double)] {
             var games = Set<String>()
             return source.filter { games.insert($0.prediction.matchup.gameKey).inserted }.prefix(count).map { $0 }
@@ -234,27 +254,10 @@ struct WeeklyDashboardView: View {
             ("lower", "Lower Variance · 2 legs", lower, 0.07),
             ("balanced", "Balanced · 3 legs", balanced, 0.06),
             ("upside", "High Upside · 4 legs", upside, 0.04)
-        ].filter { $0.legs.count >= 2 }
+        ].filter { !$0.legs.isEmpty }
     }
-    private var dashboardPlayerParlays: [(title: String, legs: [PlayerPropQuote], share: Double)] {
-        let quotes = model.predictions.flatMap { $0.playerProps ?? [] }
-            .filter { $0.bookmakers >= 4 && (-200...175).contains($0.odds) }
-            .sorted { lhs, rhs in
-                if lhs.bookmakers != rhs.bookmakers { return lhs.bookmakers > rhs.bookmakers }
-                return lhs.odds < rhs.odds
-            }
-        var unique: [PlayerPropQuote] = []
-        var players = Set<String>()
-        for quote in quotes where !players.contains(quote.player) {
-            unique.append(quote); players.insert(quote.player)
-            if unique.count == 9 { break }
-        }
-        let plans = [
-            ("Lower Variance · 2 legs", Array(unique.prefix(2)), 0.04),
-            ("Balanced · 3 legs", Array(unique.dropFirst(2).prefix(3)), 0.025),
-            ("High Upside · 4 legs", Array(unique.dropFirst(5).prefix(4)), 0.015)
-        ]
-        return plans.filter { !$0.1.isEmpty }
+    private var dashboardPlayerParlays: [RecommendedPlayerParlay] {
+        SharedBettingPlan.playerParlays(predictions: model.predictions)
     }
     private var dashboardPlanOutcomes: [(stake: Double, odds: Int, probability: Double)] {
         let singles = strongestBets.map { item in
@@ -264,13 +267,13 @@ struct WeeklyDashboardView: View {
         let games = dashboardGameParlays.map { parlay in
             let multiplier = parlay.id == "lower" ? 1.25 - bankroll.riskLevel * 0.5 : parlay.id == "upside" ? 0.5 + bankroll.riskLevel : 1
             return (fundedWeeklyAmount * parlay.share * multiplier,
-                    OddsMath.parlayAmerican(parlay.legs.map { defaultOdds(for: $0) }) ?? 100,
+                    bankroll.odds(for: "parlay-\(parlay.id)", default: OddsMath.parlayAmerican(parlay.legs.map { defaultOdds(for: $0) }) ?? 100),
                     parlay.legs.map(\.probability).reduce(1, *))
         }
         let players = dashboardPlayerParlays.map { parlay in
-            (fundedWeeklyAmount * parlay.share,
-             OddsMath.parlayAmerican(parlay.legs.map(\.odds)) ?? 100,
-             parlay.legs.compactMap { OddsMath.impliedProbability(american: $0.odds) }.reduce(1, *))
+            (fundedWeeklyAmount * parlay.budgetShare,
+             OddsMath.parlayAmerican(parlay.legs.map(\.quote.odds)) ?? 100,
+             parlay.legs.map(\.fairProbability).reduce(1, *))
         }
         return singles + games + players
     }
@@ -290,7 +293,7 @@ struct WeeklyDashboardView: View {
             return result + fundedWeeklyAmount * parlay.share * multiplier
         }
     }
-    private var playerParlayStake: Double { dashboardPlayerParlays.reduce(0) { $0 + fundedWeeklyAmount * $1.share } }
+    private var playerParlayStake: Double { dashboardPlayerParlays.reduce(0) { $0 + fundedWeeklyAmount * $1.budgetShare } }
     private var latestMarketUpdate: Date? {
         model.predictions.flatMap { $0.playerProps ?? [] }.compactMap(\.updatedAt).max() ?? model.lastUpdated
     }
@@ -363,7 +366,7 @@ struct WeeklyDashboardView: View {
                                 DisclosureGroup(isExpanded: $showGameParlays) {
                                     VStack(spacing: 10) {
                                         ForEach(Array(dashboardGameParlays.enumerated()), id: \.offset) { _, parlay in
-                                            let odds = OddsMath.parlayAmerican(parlay.legs.map { defaultOdds(for: $0) }) ?? 100
+                                            let odds = bankroll.odds(for: "parlay-\(parlay.id)", default: OddsMath.parlayAmerican(parlay.legs.map { defaultOdds(for: $0) }) ?? 100)
                                             let probability = parlay.legs.map(\.probability).reduce(1, *)
                                             let multiplier = parlay.id == "lower" ? 1.25 - bankroll.riskLevel * 0.5 : parlay.id == "upside" ? 0.5 + bankroll.riskLevel : 1
                                             let stake = fundedWeeklyAmount * parlay.share * multiplier
@@ -391,20 +394,20 @@ struct WeeklyDashboardView: View {
                                 DisclosureGroup(isExpanded: $showPlayerParlays) {
                                     VStack(spacing: 10) {
                                         ForEach(Array(dashboardPlayerParlays.enumerated()), id: \.offset) { _, parlay in
-                                            let odds = OddsMath.parlayAmerican(parlay.legs.map(\.odds)) ?? 100
-                                            let probability = parlay.legs.compactMap { OddsMath.impliedProbability(american: $0.odds) }.reduce(1, *)
-                                            let stake = fundedWeeklyAmount * parlay.share
-                                            let weakest = parlay.legs.min { (OddsMath.impliedProbability(american: $0.odds) ?? 0) < (OddsMath.impliedProbability(american: $1.odds) ?? 0) }
+                                            let odds = OddsMath.parlayAmerican(parlay.legs.map(\.quote.odds)) ?? 100
+                                            let probability = parlay.legs.map(\.fairProbability).reduce(1, *)
+                                            let stake = fundedWeeklyAmount * parlay.budgetShare
+                                            let weakest = parlay.legs.min { $0.fairProbability < $1.fairProbability }
                                             Button { navigate(.bets) } label: {
                                                 DashboardWagerCard(
                                                     title: parlay.title, category: "Player Parlay",
-                                                    detail: parlay.legs.map { "\($0.player) \($0.selection) \($0.point.formatted(.number.precision(.fractionLength(1))))" }.joined(separator: " + "),
-                                                    rationale: "Ranks player props by sportsbook coverage and price; every leg must win.",
+                                                    detail: parlay.legs.map { "\($0.quote.player) \($0.quote.selection) \($0.quote.point.formatted(.number.precision(.fractionLength(1))))" }.joined(separator: " + "),
+                                                    rationale: parlay.rationale,
                                                     stake: stake, odds: odds, probability: probability,
                                                     tint: .blue, badge: nil,
                                                     status: "Market-ranked",
                                                     source: "Consensus player-prop prices · \(marketUpdateLabel)",
-                                                    weakestLeg: weakest.map { "\($0.player) \($0.selection) \($0.point.formatted(.number.precision(.fractionLength(1)))) · \($0.odds.formatted(.number.sign(strategy: .always())))" }
+                                                    weakestLeg: weakest.map { "\($0.quote.player) \($0.quote.selection) \($0.quote.point.formatted(.number.precision(.fractionLength(1)))) · \($0.fairProbability.formatted(.percent.precision(.fractionLength(1))))" }
                                                 )
                                             }.buttonStyle(.plain)
                                         }
@@ -650,6 +653,64 @@ private struct RecommendedPlayerParlay: Identifiable {
     let budgetShare: Double
 }
 
+private enum SharedBettingPlan {
+    static func playerParlays(predictions: [Prediction]) -> [RecommendedPlayerParlay] {
+        let candidates = predictions.flatMap { prediction -> [PlayerPropCandidate] in
+            let quotes = prediction.playerProps ?? []
+            return quotes.compactMap { quote in
+                guard quote.bookmakers >= 4, (-200...175).contains(quote.odds),
+                      let rawProbability = OddsMath.impliedProbability(american: quote.odds) else { return nil }
+                let oppositeName = quote.selection.caseInsensitiveCompare("Over") == .orderedSame ? "Under" : "Over"
+                guard let opposite = quotes.first(where: {
+                    $0.player == quote.player && $0.marketKey == quote.marketKey && abs($0.point - quote.point) < 0.01 &&
+                    $0.selection.caseInsensitiveCompare(oppositeName) == .orderedSame
+                }), let oppositeProbability = OddsMath.impliedProbability(american: opposite.odds) else { return nil }
+                let probabilityTotal = rawProbability + oppositeProbability
+                guard probabilityTotal > 0 else { return nil }
+                let fairProbability = rawProbability / probabilityTotal
+                let hold = max(0, probabilityTotal - 1)
+                let ageHours = quote.updatedAt.map { max(0, Date.now.timeIntervalSince($0) / 3_600) } ?? 24
+                let freshness = max(0.65, 1 - min(ageHours, 48) / 140)
+                let coverage = min(1, Double(quote.bookmakers) / 8)
+                return PlayerPropCandidate(gameKey: prediction.matchup.gameKey,
+                    matchup: "\(prediction.matchup.away.abbreviation) at \(prediction.matchup.home.abbreviation)", quote: quote,
+                    fairProbability: fairProbability, estimatedHold: hold,
+                    qualityScore: fairProbability * 0.62 + coverage * 0.25 + freshness * 0.13 - hold * 0.30)
+            }
+        }
+        enum Mode { case lowerVariance, balanced, upside }
+        func bestCombination(count: Int, mode: Mode) -> [PlayerPropCandidate] {
+            let pool = Array(candidates.sorted { $0.qualityScore > $1.qualityScore }.prefix(32))
+            var best: [PlayerPropCandidate] = [], bestScore = -Double.infinity
+            func legScore(_ candidate: PlayerPropCandidate) -> Double {
+                switch mode {
+                case .lowerVariance: return log(max(0.01, candidate.fairProbability)) * 1.8 + candidate.qualityScore
+                case .balanced: return log(max(0.01, candidate.fairProbability)) + candidate.qualityScore * 1.3
+                case .upside:
+                    let payout = candidate.quote.odds > 0 ? Double(candidate.quote.odds) / 100 : 100 / Double(-candidate.quote.odds)
+                    return log(max(0.01, candidate.fairProbability)) * 0.65 + log(1 + payout) * 0.55 + candidate.qualityScore
+                }
+            }
+            func search(_ start: Int, _ chosen: [PlayerPropCandidate], _ players: Set<String>, _ games: Set<String>, _ score: Double) {
+                if chosen.count == count { if score > bestScore { bestScore = score; best = chosen }; return }
+                guard start < pool.count, pool.count - start >= count - chosen.count else { return }
+                for index in start..<pool.count {
+                    let candidate = pool[index]
+                    guard !players.contains(candidate.quote.player), !games.contains(candidate.gameKey) else { continue }
+                    search(index + 1, chosen + [candidate], players.union([candidate.quote.player]), games.union([candidate.gameKey]), score + legScore(candidate))
+                }
+            }
+            search(0, [], [], [], 0)
+            return best
+        }
+        return [
+            RecommendedPlayerParlay(id: "player-lower", title: "Lower Variance · 2 legs", rationale: "Top two no-vig probabilities with strong market coverage from separate games.", legs: bestCombination(count: 2, mode: .lowerVariance), budgetShare: 0.04),
+            RecommendedPlayerParlay(id: "player-balanced", title: "Balanced · 3 legs", rationale: "Top combined price, coverage and no-vig probability across separate matchups.", legs: bestCombination(count: 3, mode: .balanced), budgetShare: 0.025),
+            RecommendedPlayerParlay(id: "player-upside", title: "High Upside · 4 legs", rationale: "Higher-payout sides that retain the strongest available market-quality scores.", legs: bestCombination(count: 4, mode: .upside), budgetShare: 0.015)
+        ].filter { !$0.legs.isEmpty }
+    }
+}
+
 private struct SubmittedCurrencyEditor: View {
     let label: String
     let value: Double
@@ -721,6 +782,7 @@ struct BettingView: View {
     @State private var showUnvalidatedRecommendations = true
     @State private var selectedTab: BettingTab = .plan
     @State private var showConfiguration = false
+    @State private var showFinalReview = false
     @State private var expandedAllocationIDs: Set<String> = []
     @State private var playerName = ""
     @State private var playerPropSelection = ""
@@ -1151,15 +1213,36 @@ struct BettingView: View {
                             let predictedToWin = predictedWinnerIDs.contains(allocation.id)
                             DisclosureGroup(isExpanded: allocationExpandedBinding(allocation.id)) {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text("\(allocation.matchup) · \(allocation.recommendation.kind.rawValue) · \(allocationValidated ? "Historically validated" : "Model-ranked · unvalidated")")
+                                        Text("\(allocation.matchup) · \(allocation.recommendation.kind.rawValue) · \(allocationValidated ? "Historical grade passed" : "Historical grade pending · model-ranked")")
                                         .font(.caption).foregroundStyle(allocationValidated ? Color.secondary : Color.orange)
                                     Text("\(allocation.odds.formatted(.number.sign(strategy: .always()))) odds · Model chance: \(allocation.modelWinProbability.formatted(.percent.precision(.fractionLength(0)))) win · \((1 - allocation.modelWinProbability).formatted(.percent.precision(.fractionLength(0)))) loss")
                                         .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                                    let marketProbability = OddsMath.impliedProbability(american: allocation.odds) ?? 0
+                                    let currentEdge = allocation.modelWinProbability - marketProbability
+                                    Label("Why this bet: model \(allocation.modelWinProbability.formatted(.percent.precision(.fractionLength(1)))) vs market \(marketProbability.formatted(.percent.precision(.fractionLength(1)))) · edge \(currentEdge.formatted(.percent.precision(.fractionLength(1)).sign(strategy: .always())))",
+                                          systemImage: "chart.line.uptrend.xyaxis")
+                                        .font(.caption2).foregroundStyle(currentEdge > 0 ? Color.green : Color.red)
+                                    if bankroll.enteredOdds[allocation.id] != nil {
+                                        let baseline = defaultOdds(for: allocation.recommendation, prediction: predictions.first { "\($0.matchup.gameKey)-\(allocation.recommendation.id)" == allocation.id } ?? predictions[0])
+                                        Text("Price movement: \(baseline.formatted(.number.sign(strategy: .always()))) → \(allocation.odds.formatted(.number.sign(strategy: .always())))")
+                                            .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                                    }
+                                    if currentEdge <= 0 {
+                                        Label("Current price removes the model edge. Recheck Bet365 before placing.", systemImage: "exclamationmark.triangle.fill")
+                                            .font(.caption2.bold()).foregroundStyle(.red)
+                                    }
                                     Text("WIN → \(totalReturn.formatted(.currency(code: "USD"))) returned (+\(profit.formatted(.currency(code: "USD")))) · LOSS → $0 returned (-\(allocation.amount.formatted(.currency(code: "USD"))))")
                                         .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
                                     Label(predictedToWin ? "Illustrative scenario: WIN · \(totalReturn.formatted(.currency(code: "USD"))) returned" : "Illustrative scenario: LOSS · $0 returned",
                                           systemImage: predictedToWin ? "checkmark.circle.fill" : "xmark.circle.fill")
                                         .font(.caption2.bold()).foregroundStyle(predictedToWin ? Color.green : Color.red).monospacedDigit()
+                                    HStack {
+                                        Spacer()
+                                        Button(bankroll.manualStakes[allocation.id] == allocation.amount ? "Added to placed bets" : "Add to placed bets") {
+                                            bankroll.manualStakes[allocation.id] = allocation.amount
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                    }
                                 }
                                 .padding(.top, 4)
                             } label: {
@@ -1182,7 +1265,7 @@ struct BettingView: View {
                                     Spacer()
                                     VStack(alignment: .trailing, spacing: 2) {
                                         Text(allocation.amount.formatted(.currency(code: "USD"))).font(.headline).monospacedDigit()
-                                        Text(allocationValidated ? "validated" : "unvalidated").font(.caption2).foregroundStyle(allocationValidated ? Color.green : Color.orange)
+                                        Text(allocationValidated ? "grade passed" : "grade pending").font(.caption2).foregroundStyle(allocationValidated ? Color.green : Color.orange)
                                     }
                                 }
                             }
@@ -1237,6 +1320,12 @@ struct BettingView: View {
                                     Label(weeklyWinnerIDs.contains(wager.id) ? "Illustrative scenario: WIN · \(totalReturn.formatted(.currency(code: "USD"))) returned" : "Illustrative scenario: LOSS · $0 returned",
                                           systemImage: weeklyWinnerIDs.contains(wager.id) ? "checkmark.circle.fill" : "xmark.circle.fill")
                                         .font(.caption2.bold()).foregroundStyle(weeklyWinnerIDs.contains(wager.id) ? Color.green : Color.red)
+                                    HStack {
+                                        Spacer()
+                                        Button(bankroll.manualStakes[wager.id] == wager.stake ? "Added to placed bets" : "Add to placed bets") {
+                                            bankroll.manualStakes[wager.id] = wager.stake
+                                        }.buttonStyle(.borderedProminent)
+                                    }
                                 }.padding(.top, 4)
                             } label: {
                                 HStack {
@@ -1269,6 +1358,12 @@ struct BettingView: View {
                                     Label(weeklyWinnerIDs.contains(wager.id) ? "Illustrative scenario: WIN · \(totalReturn.formatted(.currency(code: "USD"))) returned" : "Illustrative scenario: LOSS · $0 returned",
                                           systemImage: weeklyWinnerIDs.contains(wager.id) ? "checkmark.circle.fill" : "xmark.circle.fill")
                                         .font(.caption2.bold()).foregroundStyle(weeklyWinnerIDs.contains(wager.id) ? Color.green : Color.red)
+                                    HStack {
+                                        Spacer()
+                                        Button(bankroll.manualStakes[wager.id] == wager.stake ? "Added to placed bets" : "Add to placed bets") {
+                                            bankroll.manualStakes[wager.id] = wager.stake
+                                        }.buttonStyle(.borderedProminent)
+                                    }
                                 }.padding(.top, 4)
                             } label: {
                                 HStack {
@@ -1288,6 +1383,44 @@ struct BettingView: View {
                         LabeledContent("Combined illustrative return", value: weeklyReturned.formatted(.currency(code: "USD")))
                         LabeledContent("Combined illustrative net", value: weeklyNet.formatted(.currency(code: "USD").sign(strategy: .always())))
                     }
+                }
+
+                Section {
+                    DisclosureGroup(isExpanded: $showFinalReview) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(unifiedPlan, id: \.id) { wager in
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(wager.title).fontWeight(.semibold)
+                                        Text("\(wager.category) · \(wager.odds.formatted(.number.sign(strategy: .always())))")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text(wager.stake.formatted(.currency(code: "USD"))).monospacedDigit()
+                                }
+                            }
+                            Divider()
+                            LabeledContent("Total planned stake", value: weeklyStake.formatted(.currency(code: "USD")))
+                            LabeledContent("Potential return if all win", value: unifiedPlan.reduce(0) { $0 + (OddsMath.totalReturn(stake: $1.stake, american: $1.odds) ?? 0) }.formatted(.currency(code: "USD")))
+                            LabeledContent("Currently recorded", value: bankroll.manualTotal.formatted(.currency(code: "USD")))
+                            Button {
+                                for wager in unifiedPlan { bankroll.manualStakes[wager.id] = wager.stake }
+                            } label: {
+                                Label("Add entire plan to placed bets", systemImage: "checkmark.circle.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }.padding(.top, 6)
+                    } label: {
+                        HStack {
+                            Label("Final plan confirmation", systemImage: "checkmark.seal.fill")
+                            Spacer()
+                            Text("\(unifiedPlan.count) wagers · \(weeklyStake.formatted(.currency(code: "USD")))")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } footer: {
+                    Text("Confirm the exact Bet365 prices and player availability before recording the plan. Recording a wager does not place it with a sportsbook.")
                 }
                 }
 
@@ -1684,7 +1817,7 @@ struct BettingView: View {
                         Text("Entered exposure \(bankroll.manualTotal.formatted(.currency(code: "USD")))")
                     }
                     Divider().frame(height: 18)
-                    Text("Weekly exposure \(bankroll.manualTotal.formatted(.currency(code: "USD"))) / \(min(bankroll.weeklyBudget, bankroll.bankroll).formatted(.currency(code: "USD")))")
+                    Text("Recorded wagers \(bankroll.manualTotal.formatted(.currency(code: "USD"))) / \(min(bankroll.weeklyBudget, bankroll.bankroll).formatted(.currency(code: "USD")))")
                         .foregroundStyle(bankroll.manualTotal <= min(bankroll.weeklyBudget, bankroll.bankroll) ? Color.secondary : Color.orange)
                 }
                 .font(.callout.weight(.semibold))
