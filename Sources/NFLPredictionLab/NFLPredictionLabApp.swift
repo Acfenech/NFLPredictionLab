@@ -696,6 +696,21 @@ struct BettingView: View {
             let odds = OddsMath.parlayAmerican(parlay.legs.map(\.quote.odds)) ?? 100
             return partial + (OddsMath.totalReturn(stake: stake, american: odds) ?? 0)
         }
+        let playerParlayProbabilities = recommendedPlayerParlays.map { parlay in
+            (id: parlay.id, probability: OddsMath.impliedProbability(american: OddsMath.parlayAmerican(parlay.legs.map(\.quote.odds)) ?? 100) ?? 0)
+        }
+        let playerIllustrativeWinCount = min(playerParlayProbabilities.count,
+            max(0, Int(playerParlayProbabilities.map(\.probability).reduce(0, +).rounded())))
+        let playerIllustrativeWinnerIDs = Set(playerParlayProbabilities
+            .sorted { $0.probability > $1.probability }
+            .prefix(playerIllustrativeWinCount).map(\.id))
+        let playerIllustrativeReturn = recommendedPlayerParlays.reduce(0.0) { partial, parlay in
+            guard playerIllustrativeWinnerIDs.contains(parlay.id) else { return partial }
+            let stake = min(bankroll.weeklyBudget, bankroll.bankroll) * parlay.budgetShare
+            let odds = OddsMath.parlayAmerican(parlay.legs.map(\.quote.odds)) ?? 100
+            return partial + (OddsMath.totalReturn(stake: stake, american: odds) ?? 0)
+        }
+        let playerIllustrativeNet = playerIllustrativeReturn - playerSuggestedExposure
         let latestPlayerPropUpdate = availablePlayerProps.compactMap(\.updatedAt).max()
         NavigationStack {
             VStack(spacing: 0) {
@@ -1064,6 +1079,7 @@ struct BettingView: View {
                             let suggestedStake = min(bankroll.weeklyBudget, bankroll.bankroll) * parlay.budgetShare
                             let totalReturn = OddsMath.totalReturn(stake: suggestedStake, american: combinedOdds) ?? 0
                             let impliedHitProbability = OddsMath.impliedProbability(american: combinedOdds) ?? 0
+                            let illustrativeWin = playerIllustrativeWinnerIDs.contains(parlay.id)
                             DisclosureGroup {
                                 VStack(alignment: .leading, spacing: 8) {
                                     ForEach(Array(parlay.legs.enumerated()), id: \.element.id) { index, candidate in
@@ -1094,6 +1110,12 @@ struct BettingView: View {
                                     }
                                     Label("Sportsbook-implied hit probability: \(impliedHitProbability.formatted(.percent.precision(.fractionLength(1)))) · not a model projection", systemImage: "percent")
                                         .font(.caption).foregroundStyle(.secondary)
+                                    Label(illustrativeWin
+                                          ? "Illustrative scenario: WIN · \(totalReturn.formatted(.currency(code: "USD"))) returned"
+                                          : "Illustrative scenario: LOSS · $0 returned",
+                                          systemImage: illustrativeWin ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(illustrativeWin ? Color.green : Color.red)
                                 }.padding(.top, 6)
                             } label: {
                                 HStack {
@@ -1110,6 +1132,16 @@ struct BettingView: View {
                             }
                             .padding(.vertical, 4)
                         }
+                        VStack(spacing: 5) {
+                            LabeledContent("Illustrative player-parlay record",
+                                           value: "\(playerIllustrativeWinCount) wins · \(recommendedPlayerParlays.count - playerIllustrativeWinCount) losses")
+                            LabeledContent("Illustrative return",
+                                           value: playerIllustrativeReturn.formatted(.currency(code: "USD")))
+                            LabeledContent("Illustrative net",
+                                           value: playerIllustrativeNet.formatted(.currency(code: "USD").sign(strategy: .always())))
+                        }
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
                         Text("These three parlays are ranked by market availability, price and diversification—not by a validated player-performance model. Confirm every line and combined price in Bet365 before wagering.")
                             .font(.caption).foregroundStyle(.orange)
                         DisclosureGroup("Browse consensus props · \(filteredPlayerProps.count) of \(availablePlayerProps.count)") {
@@ -1291,9 +1323,10 @@ struct BettingView: View {
                             .foregroundStyle(weeklyNet >= 0 ? Color.green : Color.red)
                     case .playerParlays:
                         Label("Suggested exposure \(playerSuggestedExposure.formatted(.currency(code: "USD")))", systemImage: "person.2.fill")
-                        Label("\(recommendedPlayerParlays.count) plans", systemImage: "list.bullet.rectangle")
+                        Label("Scenario \(playerIllustrativeWinCount)–\(recommendedPlayerParlays.count - playerIllustrativeWinCount)", systemImage: "chart.bar.fill")
                         Spacer()
-                        Text("All-win return \(playerMaximumReturn.formatted(.currency(code: "USD")))")
+                        Text("Scenario return \(playerIllustrativeReturn.formatted(.currency(code: "USD")))")
+                        Text("All-win \(playerMaximumReturn.formatted(.currency(code: "USD")))")
                     case .gameParlays:
                         Label("\(currentParlayPlans.count) game parlays", systemImage: "square.stack.3d.up.fill")
                         Spacer()
