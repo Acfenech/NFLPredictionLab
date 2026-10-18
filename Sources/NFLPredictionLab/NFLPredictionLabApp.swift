@@ -59,13 +59,19 @@ struct DashboardView: View {
                 }
             }
         }
+        .navigationSplitViewStyle(.balanced)
         .tint(AppTheme.accent)
-        .frame(minWidth: 900, minHeight: 620)
-        .onChange(of: selection) { _, destination in
+        .frame(minWidth: 1200, minHeight: 620)
+        .onAppear {
 #if os(macOS)
-            withAnimation(.easeInOut(duration: 0.18)) {
-                columnVisibility = destination == .bets ? .detailOnly : .all
-            }
+            columnVisibility = .detailOnly
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { columnVisibility = .all }
+#endif
+        }
+        .onChange(of: selection) { _, _ in
+#if os(macOS)
+            columnVisibility = .detailOnly
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { columnVisibility = .all }
 #endif
         }
         .task { await model.refresh() }
@@ -110,8 +116,9 @@ struct WeeklyDashboardView: View {
         })
     }
     private var strongestBets: [(prediction: Prediction, recommendation: BetRecommendation, probability: Double)] {
-        let ranked = model.predictions.flatMap { prediction in
-            prediction.bettingRecommendations.map { recommendation in
+        var ranked: [(prediction: Prediction, recommendation: BetRecommendation, probability: Double)] = []
+        for prediction in model.predictions {
+            for recommendation in prediction.bettingRecommendations {
                 let probability: Double
                 if let estimated = recommendation.estimatedWinProbability {
                     probability = estimated
@@ -123,10 +130,11 @@ struct WeeklyDashboardView: View {
                 case .total: probability = min(0.90, max(0.50, 1 / (1 + exp(-recommendation.edge / 9.0))))
                 }
                 }
-                return (prediction, recommendation, probability)
+                ranked.append((prediction: prediction, recommendation: recommendation, probability: probability))
             }
-        }.sorted { $0.recommendation.edge > $1.recommendation.edge }
-        let strong = ranked.filter { $0.recommendation.strength == .strong }
+        }
+        ranked.sort { $0.recommendation.edge > $1.recommendation.edge }
+        let strong = ranked.filter { $0.recommendation.strength == BetStrength.strong }
         return strong.isEmpty ? Array(ranked.prefix(5)) : Array(strong.prefix(5))
     }
     private var projectedWins: Int { Int(strongestBets.map(\.probability).reduce(0, +).rounded()) }
