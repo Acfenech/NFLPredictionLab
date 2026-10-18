@@ -13,11 +13,12 @@ struct NFLPredictionLabApp: App {
 
 struct DashboardView: View {
     @State private var selection: AppDestination? = .dashboard
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @StateObject private var model = AppModel()
     @StateObject private var bankroll = BankrollStore()
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             List(selection: $selection) {
                 Section("Betting") {
                     DestinationRow(.dashboard)
@@ -57,6 +58,13 @@ struct DashboardView: View {
         }
         .tint(AppTheme.accent)
         .frame(minWidth: 900, minHeight: 620)
+        .onChange(of: selection) { _, destination in
+#if os(macOS)
+            withAnimation(.easeInOut(duration: 0.18)) {
+                columnVisibility = destination == .bets ? .detailOnly : .all
+            }
+#endif
+        }
         .task { await model.refresh() }
     }
 }
@@ -698,8 +706,8 @@ struct BettingView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
                 Divider()
                 List {
                 if selectedTab == .plan {
@@ -1263,6 +1271,9 @@ struct BettingView: View {
                 }
                 }
                 }
+                .listStyle(.plain)
+                .contentMargins(.horizontal, 12, for: .scrollContent)
+                .contentMargins(.vertical, 6, for: .scrollContent)
             }
             .navigationTitle("Bet Slip")
             .safeAreaInset(edge: .bottom) {
