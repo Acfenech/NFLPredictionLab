@@ -110,8 +110,8 @@ struct WeeklyDashboardView: View {
         })
     }
     private var strongestBets: [(prediction: Prediction, recommendation: BetRecommendation, probability: Double)] {
-        model.predictions.flatMap { prediction in
-            prediction.bettingRecommendations.filter { $0.strength == .strong }.map { recommendation in
+        let ranked = model.predictions.flatMap { prediction in
+            prediction.bettingRecommendations.map { recommendation in
                 let probability: Double
                 if let estimated = recommendation.estimatedWinProbability {
                     probability = estimated
@@ -126,8 +126,38 @@ struct WeeklyDashboardView: View {
                 return (prediction, recommendation, probability)
             }
         }.sorted { $0.recommendation.edge > $1.recommendation.edge }
+        let strong = ranked.filter { $0.recommendation.strength == .strong }
+        return strong.isEmpty ? Array(ranked.prefix(5)) : Array(strong.prefix(5))
     }
     private var projectedWins: Int { Int(strongestBets.map(\.probability).reduce(0, +).rounded()) }
+    private var dashboardGameParlays: [(title: String, legs: ArraySlice<(prediction: Prediction, recommendation: BetRecommendation, probability: Double)>, share: Double)] {
+        let candidates = strongestBets
+        return [
+            ("Lower Variance · 2 legs", candidates.prefix(2), 0.07),
+            ("Balanced · 3 legs", candidates.prefix(3), 0.06),
+            ("High Upside · 4 legs", candidates.prefix(4), 0.04)
+        ].filter { $0.legs.count >= 2 }
+    }
+    private var dashboardPlayerParlays: [(title: String, legs: [PlayerPropQuote], share: Double)] {
+        let quotes = model.predictions.flatMap { $0.playerProps ?? [] }
+            .filter { $0.bookmakers >= 4 && (-200...175).contains($0.odds) }
+            .sorted { lhs, rhs in
+                if lhs.bookmakers != rhs.bookmakers { return lhs.bookmakers > rhs.bookmakers }
+                return lhs.odds < rhs.odds
+            }
+        var unique: [PlayerPropQuote] = []
+        var players = Set<String>()
+        for quote in quotes where !players.contains(quote.player) {
+            unique.append(quote); players.insert(quote.player)
+            if unique.count == 9 { break }
+        }
+        let plans = [
+            ("Lower Variance · 2 legs", Array(unique.prefix(2)), 0.04),
+            ("Balanced · 3 legs", Array(unique.dropFirst(2).prefix(3)), 0.025),
+            ("High Upside · 4 legs", Array(unique.dropFirst(5).prefix(4)), 0.015)
+        ]
+        return plans.filter { !$0.1.isEmpty }
+    }
 
     var body: some View {
         ScrollView {
@@ -147,7 +177,7 @@ struct WeeklyDashboardView: View {
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 14)], spacing: 14) {
                     MetricCard(title: "Weekly budget", value: bankroll.weeklyBudget.formatted(.currency(code: "USD")), subtitle: "of \(bankroll.bankroll.formatted(.currency(code: "USD"))) bankroll", icon: "dollarsign.circle.fill", color: .blue)
-                    MetricCard(title: "Strong candidates", value: strongestBets.count.formatted(), subtitle: "Review before placing", icon: "bolt.fill", color: .orange)
+                    MetricCard(title: "Planned singles", value: strongestBets.count.formatted(), subtitle: "Review before placing", icon: "bolt.fill", color: .orange)
                     MetricCard(title: "Projected record", value: strongestBets.isEmpty ? "—" : "\(projectedWins)–\(max(0, strongestBets.count - projectedWins))", subtitle: "Scenario, not a guarantee", icon: "checkmark.circle.fill", color: .green)
                     MetricCard(title: "Risk warnings", value: flagged.formatted(), subtitle: flagged == 1 ? "Market disagreement" : "Market disagreements", icon: "exclamationmark.triangle.fill", color: .purple)
                 }
@@ -155,12 +185,12 @@ struct WeeklyDashboardView: View {
                 if model.isRefreshing && model.predictions.isEmpty {
                     LoadingCardsView()
                 } else {
-                    DashboardSection(title: "Best opportunities", action: "Review all picks") { navigate(.forecasts) } content: {
+                    DashboardSection(title: "Complete weekly recommendations", action: "Open Bet Slip") { navigate(.bets) } content: {
                         VStack(spacing: 12) {
                             if strongestBets.isEmpty {
-                                ContentUnavailableView("No strong betting candidates", systemImage: "hand.raised.fill", description: Text("Passing is a valid weekly decision when no market clears the model threshold."))
+                                ContentUnavailableView("Recommendations are loading", systemImage: "arrow.clockwise", description: Text("The complete weekly plan will appear after matchup and market data arrive."))
                             } else {
-                                ForEach(Array(strongestBets.prefix(5).enumerated()), id: \.offset) { _, item in
+                                ForEach(Array(strongestBets.enumerated()), id: \.offset) { _, item in
                                     Button { navigate(.forecasts) } label: { HStack(spacing: 14) {
                                         VStack(alignment: .leading, spacing: 4) {
                                             HStack {
@@ -183,6 +213,44 @@ struct WeeklyDashboardView: View {
                                         }
                                     }.cardStyle() }.buttonStyle(.plain)
                                 }
+                            }
+                            ForEach(Array(dashboardGameParlays.enumerated()), id: \.offset) { _, parlay in
+                                Button { navigate(.bets) } label: {
+                                    HStack(spacing: 14) {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            HStack {
+                                                Text(parlay.title).font(.headline)
+                                                Text("GAME PARLAY").font(.caption2.bold()).foregroundStyle(.purple)
+                                                    .padding(.horizontal, 7).padding(.vertical, 3)
+                                                    .background(Color.purple.opacity(0.12), in: Capsule())
+                                            }
+                                            Text(parlay.legs.map { $0.recommendation.selection }.joined(separator: " + "))
+                                                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                        }
+                                        Spacer()
+                                        Text((min(bankroll.weeklyBudget, bankroll.bankroll) * parlay.share).formatted(.currency(code: "USD")))
+                                            .font(.title3.bold()).monospacedDigit()
+                                    }.cardStyle()
+                                }.buttonStyle(.plain)
+                            }
+                            ForEach(Array(dashboardPlayerParlays.enumerated()), id: \.offset) { _, parlay in
+                                Button { navigate(.bets) } label: {
+                                    HStack(spacing: 14) {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            HStack {
+                                                Text(parlay.title).font(.headline)
+                                                Text("PLAYER PARLAY").font(.caption2.bold()).foregroundStyle(.blue)
+                                                    .padding(.horizontal, 7).padding(.vertical, 3)
+                                                    .background(Color.blue.opacity(0.12), in: Capsule())
+                                            }
+                                            Text(parlay.legs.map { "\($0.player) \($0.selection) \($0.point.formatted(.number.precision(.fractionLength(1))))" }.joined(separator: " + "))
+                                                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                        }
+                                        Spacer()
+                                        Text((min(bankroll.weeklyBudget, bankroll.bankroll) * parlay.share).formatted(.currency(code: "USD")))
+                                            .font(.title3.bold()).monospacedDigit()
+                                    }.cardStyle()
+                                }.buttonStyle(.plain)
                             }
                         }
                     }
@@ -990,33 +1058,67 @@ struct BettingView: View {
                 if !unifiedGameParlays.isEmpty || !unifiedPlayerParlays.isEmpty {
                     Section("Parlays included in weekly plan") {
                         ForEach(unifiedGameParlays, id: \.id) { wager in
-                            HStack {
-                                Label(wager.title, systemImage: "square.stack.3d.up.fill")
-                                Spacer()
-                                VStack(alignment: .trailing, spacing: 2) {
-                                    Text(wager.stake.formatted(.currency(code: "USD"))).fontWeight(.semibold)
-                                    Text("\(wager.odds.formatted(.number.sign(strategy: .always()))) · \(wager.probability.formatted(.percent.precision(.fractionLength(1)))) chance")
+                            let plan = currentParlayPlans.first { "parlay-\($0.id)" == wager.id }
+                            let profit = OddsMath.profit(stake: wager.stake, american: wager.odds) ?? 0
+                            let totalReturn = OddsMath.totalReturn(stake: wager.stake, american: wager.odds) ?? 0
+                            DisclosureGroup {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(plan?.subtitle ?? "Model-ranked legs from separate games")
                                         .font(.caption).foregroundStyle(.secondary)
+                                    ForEach(plan?.legs ?? []) { leg in
+                                        Text("• \(leg.recommendation.selection) · \(leg.matchup)")
+                                            .font(.caption)
+                                    }
+                                    Text("\(wager.odds.formatted(.number.sign(strategy: .always()))) odds · Model chance: \(wager.probability.formatted(.percent.precision(.fractionLength(1)))) win · \((1 - wager.probability).formatted(.percent.precision(.fractionLength(1)))) loss")
+                                        .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                                    Text("WIN → \(totalReturn.formatted(.currency(code: "USD"))) returned (+\(profit.formatted(.currency(code: "USD")))) · LOSS → $0 returned (-\(wager.stake.formatted(.currency(code: "USD"))))")
+                                        .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                                    Label(weeklyWinnerIDs.contains(wager.id) ? "Illustrative scenario: WIN · \(totalReturn.formatted(.currency(code: "USD"))) returned" : "Illustrative scenario: LOSS · $0 returned",
+                                          systemImage: weeklyWinnerIDs.contains(wager.id) ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                        .font(.caption2.bold()).foregroundStyle(weeklyWinnerIDs.contains(wager.id) ? Color.green : Color.red)
+                                }.padding(.top, 4)
+                            } label: {
+                                HStack {
+                                    Label(wager.title, systemImage: "square.stack.3d.up.fill")
+                                    Spacer()
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        Text(wager.stake.formatted(.currency(code: "USD"))).font(.headline).monospacedDigit()
+                                        Text("\(wager.odds.formatted(.number.sign(strategy: .always()))) · \(wager.probability.formatted(.percent.precision(.fractionLength(1)))) chance")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
                                 }
-                                Label(weeklyWinnerIDs.contains(wager.id) ? "WIN" : "LOSS",
-                                      systemImage: weeklyWinnerIDs.contains(wager.id) ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                    .font(.caption.bold())
-                                    .foregroundStyle(weeklyWinnerIDs.contains(wager.id) ? Color.green : Color.red)
                             }
                         }
                         ForEach(unifiedPlayerParlays, id: \.id) { wager in
-                            HStack {
-                                Label(wager.title, systemImage: "person.2.fill")
-                                Spacer()
-                                VStack(alignment: .trailing, spacing: 2) {
-                                    Text(wager.stake.formatted(.currency(code: "USD"))).fontWeight(.semibold)
-                                    Text("\(wager.odds.formatted(.number.sign(strategy: .always()))) · \(wager.probability.formatted(.percent.precision(.fractionLength(1)))) no-vig")
+                            let plan = currentPlayerParlays.first { $0.id == wager.id }
+                            let profit = OddsMath.profit(stake: wager.stake, american: wager.odds) ?? 0
+                            let totalReturn = OddsMath.totalReturn(stake: wager.stake, american: wager.odds) ?? 0
+                            DisclosureGroup {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(plan?.rationale ?? "Market-ranked player prop combination")
                                         .font(.caption).foregroundStyle(.secondary)
+                                    ForEach(plan?.legs ?? []) { leg in
+                                        Text("• \(leg.quote.player) · \(leg.quote.selection) \(leg.quote.point.formatted(.number.precision(.fractionLength(1)))) \(leg.quote.marketName) · \(leg.matchup)")
+                                            .font(.caption)
+                                    }
+                                    Text("\(wager.odds.formatted(.number.sign(strategy: .always()))) odds · No-vig chance: \(wager.probability.formatted(.percent.precision(.fractionLength(1)))) win · \((1 - wager.probability).formatted(.percent.precision(.fractionLength(1)))) loss")
+                                        .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                                    Text("WIN → \(totalReturn.formatted(.currency(code: "USD"))) returned (+\(profit.formatted(.currency(code: "USD")))) · LOSS → $0 returned (-\(wager.stake.formatted(.currency(code: "USD"))))")
+                                        .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                                    Label(weeklyWinnerIDs.contains(wager.id) ? "Illustrative scenario: WIN · \(totalReturn.formatted(.currency(code: "USD"))) returned" : "Illustrative scenario: LOSS · $0 returned",
+                                          systemImage: weeklyWinnerIDs.contains(wager.id) ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                        .font(.caption2.bold()).foregroundStyle(weeklyWinnerIDs.contains(wager.id) ? Color.green : Color.red)
+                                }.padding(.top, 4)
+                            } label: {
+                                HStack {
+                                    Label(wager.title, systemImage: "person.2.fill")
+                                    Spacer()
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        Text(wager.stake.formatted(.currency(code: "USD"))).font(.headline).monospacedDigit()
+                                        Text("\(wager.odds.formatted(.number.sign(strategy: .always()))) · \(wager.probability.formatted(.percent.precision(.fractionLength(1)))) no-vig")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
                                 }
-                                Label(weeklyWinnerIDs.contains(wager.id) ? "WIN" : "LOSS",
-                                      systemImage: weeklyWinnerIDs.contains(wager.id) ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                    .font(.caption.bold())
-                                    .foregroundStyle(weeklyWinnerIDs.contains(wager.id) ? Color.green : Color.red)
                             }
                         }
                         Divider()
