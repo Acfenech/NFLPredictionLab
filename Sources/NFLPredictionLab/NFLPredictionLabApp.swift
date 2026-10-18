@@ -7,7 +7,10 @@ import PredictionCore
 @main
 struct NFLPredictionLabApp: App {
     var body: some Scene {
-        WindowGroup { DashboardView() }
+        WindowGroup {
+            DashboardView()
+                .environment(\.sizeCategory, .extraLarge)
+        }
     }
 }
 
