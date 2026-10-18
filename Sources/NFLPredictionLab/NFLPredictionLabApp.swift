@@ -263,7 +263,7 @@ struct UserGuideView: View {
                     GuideItem(icon: "arrow.counterclockwise.circle.fill", title: "Reset to Recommended", detail: "Restores the balanced planning defaults: 35% risk and 40% return preference. It does not change the bankroll, weekly amount, wagers, or entered odds.")
                     GuideItem(icon: "lock.shield.fill", title: "Validated recommendations", detail: "Allocates money only when a market passes its historical sample and performance gate. If none qualifies, the validated recommendation remains $0 regardless of strategy settings.")
                     GuideItem(icon: "eye.trianglebadge.exclamationmark", title: "Model-ranked recommendations", detail: "The Bet Slip segmented control reveals this week’s strongest model edges even when they failed historical validation. They can receive suggested stakes, remain orange and explicitly marked Unvalidated, and do not gain credibility merely because this mode is enabled.")
-                    GuideItem(icon: "star.fill", title: "Best Bet This Week", detail: "The highest model edge in the current weekly plan is promoted for quick review. Compare its model probability with the sportsbook-implied probability, read the rationale, then complete the pre-bet checklist. Best Bet means highest-ranked—not guaranteed.")
+                    GuideItem(icon: "star.fill", title: "Best Bet badge", detail: "The highest model edge receives a BEST BET badge inside the single-game allocation list, keeping it in context with the complete weekly plan. Expand that wager to review its probability, odds, outcome amounts and rationale. Best Bet means highest-ranked—not guaranteed.")
                     GuideItem(icon: "rectangle.3.group.fill", title: "Unified weekly plan", detail: "Weekly Plan combines single-game bets, game parlays and player parlays under one funded weekly limit. When both parlay types are available, the balanced starting mix is approximately 75% singles, 17% game parlays and 8% player parlays; risk settings adjust game-parlay weights. The combined scenario record, return and net include every displayed allocation.")
                     GuideItem(icon: "checklist", title: "Pre-bet checklist", detail: "Before placing a wager, enter the exact Bet365 price, confirm weekly exposure remains inside the budget, check that forecast data are current, and note whether the market has passed its historical grade. An incomplete item is a warning for review, not an automatic prediction of failure.")
                     GuideItem(icon: "square.stack.3d.up.fill", title: "Three parlay plans", detail: "Lower Variance uses two side/total legs, Balanced uses three diversified edges, and High Upside uses four legs with extra moneyline preference. Games are not repeated inside one parlay. Suggested stakes require validation unless you explicitly enable speculative recommendations.")
@@ -818,34 +818,6 @@ struct BettingView: View {
                 }
 
                 if let bestBet {
-                    Section {
-                        let implied = OddsMath.impliedProbability(american: bestBet.odds) ?? 0
-                        let edge = bestBet.modelWinProbability - implied
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(bestBet.recommendation.selection).font(.title3.bold())
-                                    Text("\(bestBet.matchup) · \(bestBet.recommendation.kind.rawValue)")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Text(bestBet.amount.formatted(.currency(code: "USD")))
-                                    .font(.title3.bold()).monospacedDigit()
-                            }
-                            HStack(spacing: 16) {
-                                Label("\(bestBet.modelWinProbability.formatted(.percent.precision(.fractionLength(1)))) model", systemImage: "brain.head.profile")
-                                Label("\(implied.formatted(.percent.precision(.fractionLength(1)))) implied", systemImage: "building.columns")
-                                Label("\(edge.formatted(.percent.precision(.fractionLength(1)))) edge", systemImage: "chart.line.uptrend.xyaxis")
-                                Label(validatedKinds.contains(bestBet.recommendation.kind) ? "Validated" : "Unvalidated", systemImage: validatedKinds.contains(bestBet.recommendation.kind) ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                                    .foregroundStyle(validatedKinds.contains(bestBet.recommendation.kind) ? Color.green : Color.orange)
-                            }
-                            .font(.caption).monospacedDigit()
-                            Text(bestBet.recommendation.rationale).font(.caption).foregroundStyle(.secondary)
-                        }
-                    } header: {
-                        Label("Best Bet This Week", systemImage: "star.fill")
-                    }
-
                     Section("Pre-bet checklist") {
                         ChecklistRow(label: "Current price entered from Bet365", complete: bankroll.enteredOdds[bestBet.id] != nil)
                         ChecklistRow(label: "Weekly exposure is within budget", complete: bankroll.manualTotal <= min(bankroll.weeklyBudget, bankroll.bankroll))
@@ -964,7 +936,17 @@ struct BettingView: View {
                             } label: {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(allocation.recommendation.selection).fontWeight(.semibold)
+                                        HStack(spacing: 8) {
+                                            Text(allocation.recommendation.selection).fontWeight(.semibold)
+                                            if allocation.id == bestBet?.id {
+                                                Label("BEST BET", systemImage: "star.fill")
+                                                    .font(.caption2.bold())
+                                                    .foregroundStyle(.white)
+                                                    .padding(.horizontal, 7)
+                                                    .padding(.vertical, 3)
+                                                    .background(AppTheme.accent, in: Capsule())
+                                            }
+                                        }
                                         Text("\(allocation.odds.formatted(.number.sign(strategy: .always()))) · \(allocation.modelWinProbability.formatted(.percent.precision(.fractionLength(0)))) model chance")
                                             .font(.caption).foregroundStyle(.secondary)
                                     }
